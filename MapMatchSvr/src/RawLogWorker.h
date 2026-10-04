@@ -242,6 +242,17 @@ typedef struct sZoneRunSession
 	double							dfOutLastX;							// dfOutDist 누적의 직전 기준점(구역 밖 마지막 매칭 위치).
 	double							dfOutLastY;							//   dfLastX/Y 는 구역 **안** 마지막 위치라 이탈 경계 보정에
 																		//   쓰이므로 건드리면 안 돼 별도로 든다
+	// [2026-10-04 최정우 추가 — 사용자 확정 "일반도로 출발 = 일반도로·구간단속에 매칭된 첫 tick"]
+	//   트립 시작 판정 구간(qwLastConfirmedLinkID==0) 동안 이 run 에 들어온 tick 별 기록(최대 8).
+	//   출발 후보 해소(ResolveStartAmbiguity)로 앞 tick 이 SKIP 으로 강등되면 이 기록으로 첫 유효 tick
+	//   에 출발점을 다시 잡는다(ReanchorRunHead). 판정 구간이 끝나면 더 쌓지 않는다.
+	int								nHeadTrail;
+	uint32							adwHeadSeq[8];						// tick GPS_SEQ
+	double							adfHeadAccum[8];					// 그 tick 처리 직후 dfAccumDistM
+	time_t							adtHeadTime[8];						// tick GPS 시각
+	double							adfHeadX[8];						// tick 매칭 경도
+	double							adfHeadY[8];						// tick 매칭 위도
+	uint64							aqwHeadLink[8];						// tick 매칭 링크
 
 	sZoneRunSession() :
 		dtEntryTime(0), dwEntryGpsSeq(0), dfEntryX(0.0), dfEntryY(0.0), dfAccumDistM(0.0),
@@ -252,7 +263,8 @@ typedef struct sZoneRunSession
 		bStartedByTrip(false), bGateCrossed(false),
 		bSeenBeforeGate(false), qwPendingEntryFromLinkID(0), qwEntryLinkID(0), qwFirstOutLinkID(0),
 		bEntryFixedByParkExit(false), bExitCarryArmed(false),	// (2026-09-22 최정우 추가)
-		dfOutDist(0.0), dfOutLastX(0.0), dfOutLastY(0.0)	// (2026-09-23 최정우 추가)
+		dfOutDist(0.0), dfOutLastX(0.0), dfOutLastY(0.0),	// (2026-09-23 최정우 추가)
+		nHeadTrail(0)	// (2026-10-04 최정우 추가)
 	{
 		szRoadID[0] = '\0';
 	}
@@ -293,6 +305,14 @@ typedef struct sParkRunSession
 	double							dfFirstOutX;
 	double							dfFirstOutY;
 	time_t							dtFirstOut;
+	// [2026-10-04 최정우 추가 — 정책 대조표 B9] 위 두 지점의 **매칭좌표**(신뢰 매칭일
+	//   때만, 아니면 0). 규칙3(원시 밖·매칭 안)이나 여유(park_pad)로 "안" 판정된 tick 은 원시좌표가
+	//   경계라인 밖이라 원시 쌍으로는 보간이 안 된다 — 그때 "안" 판정에 실제로 쓴 매칭좌표 쌍으로
+	//   경계라인 통과 시각을 보간한다.
+	double							dfLastInZoneMX;
+	double							dfLastInZoneMY;
+	double							dfFirstOutMX;
+	double							dfFirstOutMY;
 
 	sParkRunSession() :
 		dtEntryTime(0), dwEntryGpsSeq(0), dfEntryX(0.0), dfEntryY(0.0), dfAccumDistM(0.0),
@@ -300,7 +320,8 @@ typedef struct sParkRunSession
 		nExitTicks(0), dtExitCandidateTime(0), dtLastInZoneTime(0), dfLastInZoneX(0.0),
 		dfLastInZoneY(0.0), dwLastInZoneGpsSeq(0),
 		dtLastConfirmedTime(0), dfLastConfirmedX(0.0), dfLastConfirmedY(0.0), dwLastConfirmedGpsSeq(0),
-		dfFirstOutX(0.0), dfFirstOutY(0.0), dtFirstOut(0)
+		dfFirstOutX(0.0), dfFirstOutY(0.0), dtFirstOut(0),
+		dfLastInZoneMX(0.0), dfLastInZoneMY(0.0), dfFirstOutMX(0.0), dfFirstOutMY(0.0)	// (2026-10-04 최정우 추가)
 	{ szRoadID[0] = '\0'; }
 } PARK_RUN_SESSION;
 
@@ -425,6 +446,10 @@ typedef struct sVehicleTripSession
 	//   추정이 필요 없다(CHARGE_INSERT_ROW::vtCoveredLinks).
 	vector<uint64>					vtCoveredAll;						// 방출된 일반도로 행들의 덮은 링크 합
 	int								nEmitSeq;							// 직전까지 방출한 TRIP_SEQ. 다음 행은 nEmitSeq+1
+	// trip_seq 이어 매기기 — run() 이 배치 시작 때 읽어 둔 "그 트립의 DB 최대 TRIP_SEQ". ProcessRawLog() 가
+	//   szSeedTripId 트립을 세션에 세팅할 때 nEmitSeq 에 반영하고 비운다 (2026-10-04 최정우 추가)
+	char							szSeedTripId[60+1];
+	int								nSeedEmitSeq;
 	// 이미 방출된 **과금 대상(Y) 일반도로 행**의 GPS_SEQ 범위 — 그 안에 완전히 들어가는 N/3
 	//   일반도로 행(SKIP 구간 브릿지)을 걸러내는 데 쓴다. 큐만 봐서는 먼저 나간 행을 못 찾는다.
 	//   (2026-09-22 최정우 추가, 사용자 지시)
@@ -568,6 +593,14 @@ typedef struct sVehicleTripSession
 	double							dfLastRawTickY;
 	time_t							dtLastRawTick;
 	bool							bHasLastRawTick;
+	// [2026-10-04 최정우 추가 — 정책 대조표 B9] 위 원시 tick 스냅샷의 매칭좌표판.
+	//   ProcessParkingCharge() 가 매 tick 맨 앞에서 갱신한다(신뢰 매칭이 아니면 bHas=false — 보간은
+	//   **바로 직전 tick** 과의 쌍이어야 하므로). 세션의 dfLastMatchX 는 1 tick 지연 커밋에서 갱신돼
+	//   이 시점엔 두 tick 전 값일 수 있어 쓰지 않는다.
+	double							dfLastParkMatchX;
+	double							dfLastParkMatchY;
+	time_t							dtLastParkMatch;
+	bool							bHasLastParkMatch;
 
 	// 같은 링크 노이즈 보정(1m 강제전진, MM_NOISE_FORWARD_NUDGE_M) 억제 판별용 "직전 tick 원시
 	//   GPS 좌표·방향(heading)" — RunMapMatch() 가 매 tick 갱신한다. 좌표·방향이 직전 tick과
@@ -617,6 +650,11 @@ typedef struct sVehicleTripSession
 	time_t							dtParkTouchLastIn;
 	uint32							dwParkTouchLastInGpsSeq;			// 그 tick 의 GPS_SEQ — 복구 링크만으로 구성된
 																//   레코드의 순번을 고를 때 후보로 쓴다 (2026-09-07 최정우 추가, 사용자 지시)
+	double							dfParkTouchAccumAtLastIn;			// 그 tick 까지의 stParkTouchCarry 누적거리 — 주행 중
+																//   폴리곤을 빠져나올 때 폴리곤 안 구간을 "마지막 안쪽 tick 까지"만 일반도로로 넘길 때
+																//   쓴다. 그 뒤 이탈 디바운스 tick 은 다른 과금유형 위일 수 있어
+																//   (실측 시나리오 980007 seq15~16 면제) 넘기면 이중 계상된다
+																//   (2026-10-04 최정우 추가, 정책 대조표 B2)
 	double							dfParkTouchFirstOutX;				// 이탈 스트릭의 "첫" 밖 tick — 보간의 "밖" 기준점.
 	double							dfParkTouchFirstOutY;				//   확정 tick 을 쓰면 이미 구역에서 한참 멀어진 지점과
 	time_t							dtParkTouchFirstOut;				//   보간하게 된다(ZONE_RUN_SESSION dfFirstOut* 과 동일 문제)
@@ -875,6 +913,7 @@ typedef struct sVehicleTripSession
 		nChargeSeq(1),	// (2026-08-12 최정우 추가)
 		dfChargedNodeStepM(0.0),	// (2026-09-22 최정우 추가 — 선언 순서와 맞출 것, -Wreorder)
 		nEmitSeq(0),	// (2026-09-22 최정우 추가)
+		nSeedEmitSeq(0),	// (2026-10-04 최정우 추가)
 		dwLastEmittedStartSeq(0),	// (2026-09-22 최정우 추가)
 		bInClosedRoad(false),	// (2026-08-12 최정우 추가)
 		dfEntryFromLat(0.0),	// (2026-08-12 최정우 추가)
@@ -915,6 +954,10 @@ typedef struct sVehicleTripSession
 		dfLastRawTickY(0.0),	// (2026-08-24 최정우 추가)
 		dtLastRawTick(0),	// (2026-08-24 최정우 추가)
 		bHasLastRawTick(false),	// (2026-08-24 최정우 추가)
+		dfLastParkMatchX(0.0),	// (2026-10-04 최정우 추가)
+		dfLastParkMatchY(0.0),	// (2026-10-04 최정우 추가)
+		dtLastParkMatch(0),	// (2026-10-04 최정우 추가)
+		bHasLastParkMatch(false),	// (2026-10-04 최정우 추가)
 		dfPrevTickRawX(0.0),	// (2026-09-02 최정우 추가)
 		dfPrevTickRawY(0.0),	// (2026-09-02 최정우 추가)
 		nPrevTickAngle(-1),	// (2026-09-02 최정우 추가)
@@ -933,6 +976,7 @@ typedef struct sVehicleTripSession
 		dfParkTouchLastInY(0.0),	// (2026-09-05 최정우 추가)
 		dtParkTouchLastIn(0),	// (2026-09-05 최정우 추가)
 		dwParkTouchLastInGpsSeq(0),	// (2026-09-07 최정우 추가)
+		dfParkTouchAccumAtLastIn(0.0),	// (2026-10-04 최정우 추가)
 		dfParkTouchFirstOutX(0.0),	// (2026-09-05 최정우 추가)
 		dfParkTouchFirstOutY(0.0),	// (2026-09-05 최정우 추가)
 		dtParkTouchFirstOut(0),	// (2026-09-05 최정우 추가)
@@ -1046,12 +1090,7 @@ typedef struct sRawLogWorkerConfig
 	string							strUpdateSQL;						// [rawgps_update] 완료(1/3/4) 및 release(0) 공용
 	string							strChargeInsertSQL;					// [charge_insert] 개방형 게이트 통과 bulk INSERT (비어있으면 비활성) (2026-08-12 최정우 수정)
 	string							strTripEndUpdateSQL;				// [trip_end] 트립 종료 시 trip_end_dt UPDATE (비어있으면 비활성) (2026-08-12 최정우 추가)
-	string							strAbnormalTripEndSQL;				// [trip_abend] TTL 만료 시 미확정 레코드 마감 UPDATE, 4유형 공용 (비어있으면 비활성) (2026-08-13 최정우 추가, 2026-08-13 수정 — 개방형 한정 해제)
-	// [2026-09-22 최정우] **기본이 비활성**이다(config.ini 의 trip_seqoff/trip_seqfin 이 빈 값).
-	//   워터마크 큐가 적재 시점에 TRIP_SEQ 를 확정하므로 사후 재부여가 필요 없고, 재부여는 PK 를
-	//   UPDATE 해 외부 과금서버의 60초 폴링과 충돌한다. 되돌리려면 config 두 줄을 채우면 된다.
-	string							strTripSeqOffSQL;					// [trip_seqoff] TRIP_SEQ 재부여 1단계(오프셋) UPDATE (비어있으면 비활성) (2026-09-03 최정우 추가)
-	string							strTripSeqFinSQL;					// [trip_seqfin] TRIP_SEQ 재부여 2단계(확정) UPDATE (비어있으면 비활성) (2026-09-03 최정우 추가)
+	string							strTripSeqMaxSQL;					// [trip_seqmax] 트립의 기존 최대 TRIP_SEQ 조회(읽기 전용, 비어있으면 이어 매기기 비활성) (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
 	int								nWorkerThreads;
 	int								nTtlSec;							// trip_id 세션 유지 시간 (초, 0=비활성)
 	int								nMatchTimeoutMs;					// 1 GPS 맵매칭 처리 임계 (ms, 초과 시 ERROR 격리, 0=비활성)
@@ -1114,6 +1153,8 @@ public:
 
 	virtual void run(int nThreadId, void *context);
 	virtual void stop(int nThreadId, void *context);
+	// 일감 없이 대기 상한이 지났을 때 워커 스레드에서 호출 — 자기 세션의 TTL 검사 (2026-10-04 최정우 추가)
+	virtual void idle(int nThreadId);
 
 private:
 	// pstSession: 배치 임시 세션(in-memory). bulk 성공 후에만 m_vtTripSessions 에 반영
@@ -1348,6 +1389,9 @@ private:
 	//   fallback용 순수 그래프탐색(맵매칭 스코어링 없음). pvtPathOut 은 qwFromLink~qwToLink 포함
 	//   순서대로, 실패 시 비움 (2026-09-01 최정우 추가)
 	bool FindLinkPathBounded(uint64 qwFromLink, uint64 qwToLink, int nMaxHops, vector<uint64> *pvtPathOut);
+	// 폐쇄식·구간단속 출구 게이트를 누락 링크 복구 경로에서 찾는다 — 구현부 주석 참고 (2026-10-04 최정우 추가)
+	PGATE_INFO FindExitGateOnRecoveredPath(int nThreadId, const sRawLogInfo& stRawLogInfo,
+		const MATCH_LINK_INFO& stMatchLinkInfo, uint64 qwLastZoneLinkID, const char *pszZoneRoadId);
 	// 링크의 시작 노드부터 세그먼트를 순회하며 폴리곤과 처음 교차하는 지점까지의 부분 거리·좌표를
 	//   구한다 — 주정차 접촉으로 마감되는 NODE_STEP run의 누락 링크 보정 전용(사용자 지시,
 	//   2026-09-03 최정우 추가). 링크 전체가 폴리곤 밖이면 false(호출측이 전체 길이를 더하고
@@ -1378,8 +1422,8 @@ private:
 	void BuildOpenZoneRow(const ZONE_RUN_SESSION& stRun, const string& strTripId,
 		const string& strDeviceKey, int nChargeSeq, time_t dtEnd, uint32 dwEndGpsSeq, CHARGE_INSERT_ROW *pstRow);
 	// TTL 만료로 세션이 지워지기 직전, 아직 열려있는 개방형 run 이면 그 상태 그대로 1건 기록 —
-	//   [trip_abend] UPDATE(query.sql)가 뒤이어 TRIP_END_DT IS NULL 인 이 행을 찾아 N/3(AUDIT)로
-	//   정정한다(다른 유형과 동일한 2단계 처리, AppendExpiredNodeStepCharge 참고) (2026-08-25 최정우 추가)
+	//   N/3(AUDIT)로 직접 기록한다. [2026-10-04 정정] 종전엔 [trip_abend] 가 뒤이어 정정하는 2단계였으나
+	//   [trip_abend] 는 삭제됐다(TTL 마감은 [trip_end] 로 통합 — 판정을 바꾸지 않음) (2026-08-25 최정우 추가)
 	void AppendExpiredOpenGateCharge(int nThreadId, const string& strDeviceKey,
 		const VEHICLE_TRIP_SESSION& stSession, vector<CHARGE_INSERT_ROW> *pvtOut,
 		bool bNoTripEnd = false);
@@ -1469,11 +1513,9 @@ private:
 	// TTL 만료(비정상 종료) 시 그 trip_id 의 전 과금유형(0~5) 중 아직 TRIP_END_DT 없는 행을
 	//   N/3(AUDIT) + TRIP_END_DT(마지막 확인 시각)으로 마감(사용자 지시, 2026-08-13 추가,
 	//   2026-08-13 수정 — 개방형 한정 해제, status 4→3 정정)
-	bool UpdateAbnormalTripEnd(PGconn *pcConn, const vector<TRIP_END_UPDATE_ROW>& vtRows);
-	// [trip_end]/[trip_abend] 직후 같은 trip_id 목록으로 실행 — TRIP_SEQ 를 START_GPS_SEQ 기준
-	//   실제 주행 순서로 재부여(다른 어플리케이션이 TRIP_SEQ 를 과금 순번으로 그대로 불러 쓸
-	//   예정이라는 사용자 지시, 2026-09-03 추가). best-effort — 실패해도 배치 자체는 성공 처리
-	bool UpdateTripSeqOrder(PGconn *pcConn, const vector<string>& vtTripIds);
+	// 그 트립의 기존 최대 TRIP_SEQ 조회(읽기 전용, trip_seq 이어 매기기) — 구현부 주석 참고 (2026-10-04 최정우 추가)
+	int QueryTripSeqMax(PGconn *pcConn, const string& strTripId, const string& strDeviceKey);
+	// UpdateTripSeqOrder() 삭제 (2026-10-04 최정우 삭제 — 사용자 지시: trip_seq 는 SQL 로 처리하지 않고 엔진이 확정할 때 등록한다)
 
 	// ── 과금 행 워터마크 큐 (2026-09-22 최정우 추가 — 사용자 확정 요구) ────────────────────
 	//   TRIP_SEQ 를 적재 시점에 최종 확정하기 위한 3종 세트. 상세는 VEHICLE_TRIP_SESSION 의

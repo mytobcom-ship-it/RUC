@@ -22,6 +22,9 @@ public:
 	// 기본 구현은 아무것도 하지 않으므로 인자를 쓰지 않는다. 인터페이스 문서용으로 이름은
 	// 남겨두되 주석 처리해 -Wunused-parameter 를 피한다(재정의하는 쪽에서는 실제로 사용).
 	virtual void stop(int /* nThreadId */, void * /* context */ = nullptr) {}
+	// 워커가 일감 없이 일정 시간(CThreadPoolWorker 의 대기 상한) 기다렸을 때 그 워커 스레드에서 호출된다.
+	//   기본 구현은 아무것도 하지 않는다 (2026-10-04 최정우 추가 — RawLogWorker 의 주기 TTL 검사용)
+	virtual void idle(int /* nThreadId */) {}
 	static uint32 GetThreadHandle();
 };
 

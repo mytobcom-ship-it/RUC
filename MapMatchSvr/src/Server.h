@@ -124,9 +124,7 @@ private:
 	string							m_strRawLogUpdateSQL;				// 결과 갱신 SQL
 	string							m_strChargeInsertSQL;				// 개방형 게이트 통과 과금 INSERT SQL, 비어 있으면 비활성
 	string							m_strTripEndUpdateSQL;				// 트립 종료 시 trip_end_dt UPDATE SQL, 비어 있으면 비활성 (2026-08-12 최정우 추가)
-	string							m_strAbnormalTripEndSQL;			// TTL 만료(비정상 종료) 시 개방형 미확정 레코드 마감 UPDATE SQL (2026-08-13 최정우 추가)
-	string							m_strTripSeqOffSQL;					// 트립 종료 시 TRIP_SEQ 재부여 1단계(오프셋) UPDATE SQL (2026-09-03 최정우 추가)
-	string							m_strTripSeqFinSQL;				// 트립 종료 시 TRIP_SEQ 재부여 2단계(확정) UPDATE SQL (2026-09-03 최정우 추가)
+	string							m_strTripSeqMaxSQL;					// [trip_seqmax] 트립의 기존 최대 TRIP_SEQ 조회 (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
 	string							m_strGateSelectSQL;				// 과금 게이트 전량 조회 SQL (2026-08-12 최정우 추가)
 	string							m_strZoneSelectSQL;				// 과금 구역 전량 조회 SQL (2026-08-12 최정우 추가)
 	string							m_strParkFineSelectSQL;				// 주정차 과태료 최소 FROM_MIN 조회 SQL, 비어 있으면 체류시간 임계 비활성 (2026-08-24 최정우 추가)

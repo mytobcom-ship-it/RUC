@@ -96,6 +96,10 @@ typedef struct sZoneInfo
 	double							dfLastLat;								// coords 마지막 정점 — 구간단속 to_lat
 	vector<POINT>					vtCoords;								// coords 파싱 결과 — GEOM_TYPE='POLY'(주정차)에서만 채움,
 																			//   PointInPolygon 판정용. LINE 은 LENGTH_M/FIRST/LAST 로 충분해 미파싱 (2026-08-13 최정우 추가)
+	vector<POINT>					vtLineCoords;							// coords 파싱 결과 — 폐쇄형(2)·구간단속(3) LINE 만 채움.
+																			//   진입·진출 게이트 사이 거리를 구역 선을 따라 재는 데 쓴다
+																			//   (CalcZoneSpanM, 2026-10-04 최정우 추가 — 사용자 확정). vtCoords 와
+																			//   분리한 이유: vtCoords 는 주정차 폴리곤 판정 루프가 크기만 보고 쓴다
 	vector<uint64>					vtLinkIds;								// link_ids 파싱 결과 — ROAD_KIND='0'(일반도로)·'1'(개방형)·'5'(면제
 																			//   도로)는 매칭 링크→구역 역인덱스 구성용(게이트가 없거나 진입/이탈
 																			//   판정 자체를 이걸로 함, 2026-08-13/25 최정우 추가). '2'(폐쇄형)·
@@ -166,6 +170,7 @@ public:
 	void GetGatesByLinkId(const uint64 qwLinkID, const char cGateDiv, vector<PGATE_INFO> *pvtOut);
 	PGATE_INFO GetGateNearby(const double dfLat, const double dfLon, const double dfGateRadiusM);
 	PGATE_INFO GetGateByRoadId(const string& strRoadID, const char cGateDiv);
+	PGATE_INFO GetGateByTollgateId(const char *pszTollgateID);				// (2026-10-04 최정우 추가)
 	PZONE_INFO GetZoneByRoadId(const string& strRoadID);
 	// 주정차(POLY) 구역 중 (dfLon,dfLat) 을 포함하는 구역 — 게이트가 없어 road_id 를 미리 알 수 없으므로
 	//   POLY 전량을 순회하며 판정. dfPadM>0 이면 폴리곤 경계까지 거리가 그 이내인 경우도 포함(ACCURACY_M

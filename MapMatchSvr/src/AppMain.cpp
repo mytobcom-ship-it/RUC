@@ -299,11 +299,10 @@ bool Initialize(string config_file, PCONFIG pstConfig)
 	cIniReader.GetProfileStr("sql", "parkfine_select", "", pstConfig->strParkFineSelectSession);
 	// [sql] trip_end (선택, 비어 있으면 trip_end_dt UPDATE 비활성) (2026-08-12 최정우 추가)
 	cIniReader.GetProfileStr("sql", "trip_end", "", pstConfig->strTripEndUpdateSession);
-	// [sql] trip_abend (선택, 비어 있으면 비활성) (2026-08-13 최정우 추가, 2026-08-21 최정우 수정 — key명 abnormal_trip_end→trip_abend)
-	cIniReader.GetProfileStr("sql", "trip_abend", "", pstConfig->strAbnormalTripEndSession);
-	// [sql] trip_seqoff/trip_seqfin (선택, 비어 있으면 TRIP_SEQ 재부여 비활성) (2026-09-03 최정우 추가)
-	cIniReader.GetProfileStr("sql", "trip_seqoff", "", pstConfig->strTripSeqOffSession);
-	cIniReader.GetProfileStr("sql", "trip_seqfin", "", pstConfig->strTripSeqFinSession);
+	// [sql] trip_abend 읽기 삭제 — TTL 마감은 [trip_end] 로 통합 (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
+	// [sql] trip_seqmax (선택, 비어 있으면 trip_seq 이어 매기기 비활성) (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
+	cIniReader.GetProfileStr("sql", "trip_seqmax", "", pstConfig->strTripSeqMaxSession);
+	// [sql] trip_seqoff/trip_seqfin 읽기 삭제 (2026-10-04 최정우 삭제 — 사용자 지시: trip_seq 는 SQL 로 처리하지 않고 엔진이 확정할 때 등록한다)
 	// [sql] server_status (선택, 비어 있으면 서버 상태 하트비트 비활성) (2026-08-20 최정우 추가)
 	cIniReader.GetProfileStr("sql", "server_status", "", pstConfig->strServerStatusSession);
 	// [sql] stale_recover (선택, 비어 있으면 좀비 PROCESSING 운영 중 회수 비활성) (2026-08-29 최정우 추가)
@@ -589,9 +588,8 @@ static void LogStartupConfig(const CONFIG& stConfig)
 	LOGFMTI("[sql] charge_insert=[%s] gate_select=[%s] zone_select=[%s] parkfine_select=[%s]",
 		OptStr(stConfig.strChargeInsertSession), OptStr(stConfig.strGateSelectSession),
 		OptStr(stConfig.strZoneSelectSession), OptStr(stConfig.strParkFineSelectSession));
-	LOGFMTI("[sql] trip_end=[%s] trip_abend=[%s] trip_seqoff/fin=[%s]/[%s]",
-		OptStr(stConfig.strTripEndUpdateSession), OptStr(stConfig.strAbnormalTripEndSession),
-		OptStr(stConfig.strTripSeqOffSession), OptStr(stConfig.strTripSeqFinSession));
+	LOGFMTI("[sql] trip_end=[%s] trip_seqmax=[%s]",
+		OptStr(stConfig.strTripEndUpdateSession), OptStr(stConfig.strTripSeqMaxSession));
 	LOGFMTI("[sql] server_status=[%s] stale_recover=[%s]",
 		OptStr(stConfig.strServerStatusSession), OptStr(stConfig.strStaleRecoverSession));
 	LOGFMTI("[server] id=[%s] status_interval=[%d]s stale_sec=[%d]s",

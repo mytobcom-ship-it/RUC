@@ -422,6 +422,28 @@ PGATE_INFO CChargeDataLoader::GetGateByRoadId(const string& strRoadID, const cha
 }
 
 /**
+ * @brief tollgate_id 로 게이트 조회 — 진입 때 세션에 남긴 입구 게이트 ID 로 좌표를 다시 얻는다
+ *   (2026-10-04 최정우 추가 — 게이트 간 거리 산출용). GetGateByRoadId 와 같은 선형 탐색
+ * @param[in] pszTollgateID 게이트 ID
+ * @return 게이트 정보 포인터(없으면 nullptr)
+*/
+PGATE_INFO CChargeDataLoader::GetGateByTollgateId(const char *pszTollgateID)
+{
+	if ((pszTollgateID == nullptr) || (pszTollgateID[0] == '\0'))
+		return nullptr;
+	lock_guard<CMutex> cLock(m_cGateCacheMutex);
+	for (mapGateInfo::iterator it = m_mapGateInfo.begin(); it != m_mapGateInfo.end(); ++it)
+	{
+		for (size_t i = 0; i < it->second.size(); ++i)
+		{
+			if (strcmp(pszTollgateID, it->second[i].szTollgateID) == 0)
+				return &(it->second[i]);
+		}
+	}
+	return nullptr;
+}
+
+/**
  * @brief 로드된 게이트 총 개수 — link_id 공유로 vector 에 여러 건 들어간 경우도 전부 합산 (2026-08-12 최정우 추가)
  * @return 게이트 총 개수
 */
@@ -579,6 +601,9 @@ bool CChargeDataLoader::LoadZones()
 		//   불필요한 파싱·메모리를 아낌 (2026-08-13 최정우 추가)
 		if (strcmp(stZoneInfo.szGeomType, "POLY") == 0)
 			ParseCoordsJson(stZoneInfo.strCoordsJson, &stZoneInfo.vtCoords);
+		// 폐쇄형(2)·구간단속(3) LINE 은 게이트 간 거리 산출용으로 파싱한다 (2026-10-04 최정우 추가, 사용자 확정)
+		else if ((stZoneInfo.szRoadKind[0] == '2') || (stZoneInfo.szRoadKind[0] == '3'))
+			ParseCoordsJson(stZoneInfo.strCoordsJson, &stZoneInfo.vtLineCoords);
 
 		// 일반도로(ROAD_KIND=0)·면제도로(ROAD_KIND=5)만 link_ids 파싱 — 게이트가 없어 매칭
 		//   링크→구역 역인덱스가 유일한 진입/이탈 판정 수단(다른 LINE 유형은 게이트 기반이라 불필요)

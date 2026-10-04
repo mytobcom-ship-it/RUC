@@ -43,9 +43,7 @@ typedef struct sConfig
 	string							strZoneSelectSession;				// 과금 구역(BASE_ROADLINK) 전량 조회 SQL, 비어 있으면 CChargeDataLoader 구역 캐시 비활성 (2026-08-12 최정우 추가)
 	string							strParkFineSelectSession;			// 주정차 과태료(BASE_PARKING_FINE) 최소 FROM_MIN 조회 SQL, 비어 있으면 체류시간 임계 비활성 (2026-08-24 최정우 추가)
 	string							strTripEndUpdateSession;			// 트립 종료 시 trip_end_dt UPDATE SQL, 비어 있으면 비활성 (2026-08-12 최정우 추가)
-	string							strAbnormalTripEndSession;			// TTL 만료(비정상 종료) 시 개방형 미확정 레코드 마감 UPDATE SQL, 비어 있으면 비활성 (2026-08-13 최정우 추가)
-	string							strTripSeqOffSession;				// 트립 종료 시 TRIP_SEQ 재부여 1단계(오프셋) UPDATE SQL, 비어 있으면 비활성 (2026-09-03 최정우 추가)
-	string							strTripSeqFinSession;				// 트립 종료 시 TRIP_SEQ 재부여 2단계(확정) UPDATE SQL, 비어 있으면 비활성 (2026-09-03 최정우 추가)
+	string							strTripSeqMaxSession;				// [sql] trip_seqmax — 트립의 기존 최대 TRIP_SEQ 조회(읽기 전용), 비어 있으면 이어 매기기 비활성 (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
 	string							strServerStatusSession;				// 서버 상태(CPU/메모리) 하트비트 UPDATE SQL, 비어 있으면 비활성 (2026-08-20 최정우 추가)
 	string							strStaleRecoverSession;				// 좀비 PROCESSING 운영 중 회수 SQL, 비어 있으면 비활성 (2026-08-29 최정우 추가)
 

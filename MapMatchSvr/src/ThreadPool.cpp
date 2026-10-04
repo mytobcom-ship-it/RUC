@@ -24,19 +24,41 @@ void CThreadPoolWorker::run(int nThreadId, void *context)
 	CThreadPool *pcThreadPool = reinterpret_cast<CThreadPool *>(context);
 	RAW_LOG_BATCH vtRawLog;
 
+	// [2026-10-04 최정우 수정, 사용자 확정 — TTL 마감 권장안 (다)] 대기를 무기한(wait)에서 상한 있는
+	//   대기(waitTimed)로 바꿨다. 상한 동안 일감이 없으면 **이 워커 스레드에서** Runnable::idle() 을 부른다 —
+	//   RawLogWorker 는 거기서 자기 세션의 TTL 을 검사한다. 종전에는 TTL 검사가 "그 워커에 다음 배치가 올
+	//   때"만 돌아, 데이터가 끊긴 단말의 트립은 재기동 전까지 마감되지 않았다. 세션은 워커 스레드 전용이라
+	//   반드시 같은 스레드에서 호출해야 한다(다른 스레드에서 건드리면 TRIP_SEQ 카운터가 꼬일 수 있다).
+	// 되돌리는 법: 아래 waitTimed/bIdleTick 을 종전 wait() 로 되돌린다.
+	static const int MM_WORKER_IDLE_TICK_MS = 60000;
 	while (!m_bStopped)
 	{
 		// predicate 검사 + 대기 + Dequeue 를 동일 mutex 로 보호 (lost-wakeup 방지)
+		bool bIdleTick = false;
 		pcThreadPool->m_paMutex[nThreadId].lock();
 		while ((pcThreadPool->m_paQueues[nThreadId].Count() == 0) && !m_bStopped)
 		{
 			m_nState = EWS_WAITING;
-			pcThreadPool->m_paCondition[nThreadId].wait(pcThreadPool->m_paMutex[nThreadId]);
+			const bool bSignaled = pcThreadPool->m_paCondition[nThreadId].waitTimed(
+				pcThreadPool->m_paMutex[nThreadId], MM_WORKER_IDLE_TICK_MS);
 			m_nState = EWS_UNKNOWN;
+			if (!bSignaled && (pcThreadPool->m_paQueues[nThreadId].Count() == 0) && !m_bStopped)
+			{
+				bIdleTick = true;
+				break;
+			}
 		}
 
-		bool bDequeued = pcThreadPool->m_paQueues[nThreadId].Dequeue(vtRawLog);
+		bool bDequeued = (!bIdleTick) && pcThreadPool->m_paQueues[nThreadId].Dequeue(vtRawLog);
 		pcThreadPool->m_paMutex[nThreadId].unlock();
+
+		if (bIdleTick)
+		{
+			m_nState = EWS_ACTIVE;				// 종료 대기(WaitForActiveIdle)가 진행 중인 TTL 마감을 기다리도록
+			pcThreadPool->m_pcRunnable->idle(nThreadId);
+			m_nState = EWS_UNKNOWN;
+			continue;
+		}
 
 		if (bDequeued)
 		{

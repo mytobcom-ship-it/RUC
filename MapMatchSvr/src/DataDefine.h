@@ -431,7 +431,7 @@ typedef struct sAltitudeScoreConfig
 																							//   차량의 다음 운행이 시작돼 강제마감(N/4). 62 의 면제도로판
 																							//   (2026-09-16 최정우 추가)
 #define NCR_TTL_FORCED_CLOSE			61									// 공통(NODE_STEP/OPEN/CLOSED/PARKING) — 종료 미확정
-																			//   강제마감(N/3), [trip_abend] SQL 사후전환 포함.
+																			//   강제마감(N/3). (2026-10-04: [trip_abend] SQL 사후전환은 삭제됨)
 																			//   [2026-09-15 적용범위 확대] 상수명은 TTL 이지만 실제로는
 																			//   FlushOpenRunsAsAbnormalEnd() 등 공용이다 —
 																			//   ①TTL 만료·신호두절 ②종료신호 이후 잔여 tick

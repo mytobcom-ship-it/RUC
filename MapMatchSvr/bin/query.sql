@@ -337,6 +337,8 @@ SELECT MIN(FROM_MIN) FROM RUC.BASE_PARKING_FINE;
 --       (OCCUR_DT-STAY_SECONDS ~ OCCUR_DT), 그 외는 (OCCUR_DT ~ OCCUR_DT+STAY_SECONDS) 다.
 --       (2026-09-15 최정우 추가 — DB 컬럼 코멘트에도 동일 내용 반영)
 --   $21=ENTRY_TOLLGATE_ID[](폐쇄형 전용, 개방형은 빈값) $22=EXIT_TOLLGATE_ID[](폐쇄형 전용) $23=REG_DT[] $24=UPD_DT[]
+--   [2026-10-04 최정우 수정] $24=UPD_DT[] 는 6유형 모두 REG_DT 와 같은 값(최종 수정 일시 = INSERT 시점)이다.
+--     DB 컬럼 정의(UPD_DT '최종 수정 일시')에 맞췄다. 아래 2026-09-17 정정의 유형별 차이는 그 이전 상태다.
 --   [2026-09-17 최정우 정정] 종전 "$24=UPD_DT[](REG_DT와 항상 동일)" 는 사실이 아니다 —
 --   게이트형(개방·폐쇄·구간단속)·주정차는 REG_DT 와 같은 값이지만, 일반도로·면제도로
 --   (BuildNodeStepRow/BuildNodeStepRowFromLinkRange/BuildExemptRow)는 OCCUR_DT(진출 시각)를
@@ -437,13 +439,17 @@ ON CONFLICT (trip_id, device_key, trip_seq) DO NOTHING;
 --   (FormatDateTime14(stRawLogInfo.dtGPS))으로 만들어지므로(RawLogWorker.cpp
 --   ProcessRawLog 트립종료 블록), 같은 값으로 맞추는 것이 원래 의미에 부합한다.
 --   둘 다 비어 있을 때만 최후 수단으로 현재 시각을 쓴다.
+-- [2026-10-04 최정우 수정 — 사용자 위임 결정] UPD_DT 는 TRIP_END_DT(GPS 시각)로 폴백하지 않고 벽시계로
+--   메운다 — UPD_DT 는 '최종 수정 일시'(DB 컬럼 정의)이고, 트립 종료 시각은 TRIP_END_DT 에 이미 있다.
+--   GPS 시각(과거)을 넣으면 수정 시각이 등록 시각(REG_DT)보다 앞서는 모순이 생기고, 수정분을 UPD_DT 로
+--   찾는 쪽이 이 갱신을 놓친다. C++ 도 이제 벽시계를 넘긴다(RawLogWorker.cpp 트립종료 블록).
+--   이 UPDATE 는 2026-10-04 부터 과금 INSERT 와 같은 배치 트랜잭션 안에서 실행된다.
 -- $1=TRIP_ID[] $2=TRIP_END_DT[] $3=UPD_DT[]
 [trip_end]
 UPDATE RUC.PRIM_CHARGEHAND AS T
 SET
 	TRIP_END_DT = NULLIF(V.TRIP_END_DT, ''),
-	UPD_DT = COALESCE(NULLIF(V.UPD_DT, ''), NULLIF(V.TRIP_END_DT, ''),
-	                  TO_CHAR(NOW(), 'YYYYMMDDHH24MISS'))
+	UPD_DT = COALESCE(NULLIF(V.UPD_DT, ''), TO_CHAR(NOW(), 'YYYYMMDDHH24MISS'))
 FROM (
 	SELECT DISTINCT ON (TRIP_ID) TRIP_ID, TRIP_END_DT, UPD_DT
 	FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[]) AS U(TRIP_ID, TRIP_END_DT, UPD_DT)
@@ -452,99 +458,23 @@ FROM (
 WHERE T.TRIP_ID = V.TRIP_ID
 	AND (T.TRIP_END_DT IS NULL OR V.TRIP_END_DT > T.TRIP_END_DT);
 
--- ── 7. 세션 TTL 만료(비정상 종료) 시 미확정 레코드 마감(전 과금유형 공용) ─────────
--- [trip_abend] CRawLogWorker::UpdateAbnormalTripEnd() 가 ExpireTtlSessions() 안에서
--- 실행(2026-08-13 최정우 추가, 2026-08-13 수정 — CHARGE_TYPE 제한 제거해 전 유형으로 확대).
--- (2026-09-15 부터 ExpireTtlSessions() 외에 트립종료 잔여tick·트립전환·서버종료 경로에서도 실행됨)
--- "그 trip_id로 마지막 GPS 이후 TTL 넘게 신호가 없었는데(=트립이 정상 종료됐는지 끝내 확인 못함)
--- 이미 INSERT된 레코드가 아직 TRIP_END_DT 를 못 받은 상태"를 charge_type 무관하게 "확정 데이터
--- 아님"으로 표시(사용자 지시, 2026-08-13). CHARGE_STATUS=3(AUDIT=심사대상) — 완전 배제(SKIP=4)가
--- 아니라 사람이 재확인하도록 표시(사용자 지시, 2026-08-13 — 원래 4였다가 3으로 정정).
--- 2026-08-14 최정우 수정 — CHARGE_TYPE=5(면제도로)는 예외: 애초에 과금 대상이 아니라 재확인이
--- 필요없다는 설계 의도로 CHARGE_STATUS=4(SKIP) 고정이 맞음(사용자 확인) — 이 UPDATE가 무조건
--- 3으로 덮어쓰면 그 의도가 깨지므로, 면제도로만 4를 유지하도록 분기.
--- TRIP_END_DT IS NULL 조건으로 이미 [trip_end] 로 정상 마감된 레코드는 건드리지 않음.
--- [2026-09-17 최정우 정정] 종전 주석은 "주정차의 지금 막 열려있는 세션은 AppendExpiredParkingCharge()
--- 가 이미 TRIP_END_DT 채워진 채로 INSERT하므로 이 UPDATE 와 안 겹친다"고 했으나 **사실이 아니다** —
--- BuildParkRow() 는 TRIP_END_DT 를 채우지 않는다(소스 확인). INSERT 시점에 채우는 곳은
--- AppendExpiredClosedRoadCharge() 와 AppendExpiredSpeedZoneCharge() 의 NODE_STEP 미러 두 곳뿐이다.
--- 따라서 주정차·면제·일반도로·개방형의 강제마감 행도 이 UPDATE 대상이 되며, 그게 의도된 동작이다
--- (이 UPDATE 가 TRIP_END_DT 와 판정·사유를 함께 확정해 준다). 값이 이미 N/3+61 이라 결과는 같다.
--- 주의: 트립전환 강제마감(non_charge_reason=62/52)은 이 UPDATE 가 아니라 [trip_end] 경로로 처리되어
--- 61/51 로 덮이지 않는다 — run() 이 그 행들을 UpdateTripEndDt() 로 보내기 때문이다.
--- NON_CHARGE_REASON — 2026-09-11 최정우 추가. CHARGE_STATUS 와 동일 근거로 면제도로(5)만 51
--- (NCR_EXEMPT_TTL_FORCED_CLOSE), 나머지는 61(NCR_TTL_FORCED_CLOSE) 로 무조건 덮어쓴다 — 이 UPDATE가
--- 손대는 행은 전부 "트립이 끝났는지 끝내 확인 못한 TTL 강제종료" 사유 하나뿐이라(C++ 쪽에서 미리
--- 61/51 로 INSERT된 행이든, 원래 Y/0 이었다가 지금 여기서 처음 N 으로 바뀌는 행이든) 값이 갈릴
--- 이유가 없다. C++ 상수(DataDefine.h)와 반드시 같은 값 유지할 것.
--- [버그 수정, 2026-09-17 최정우] 아래 설명 블록은 원래 이 SQL 의 SET 절 **안에** 있었다.
--- query.sql 파서(CSQLAccessor::Initialize)는 각 줄의 개행을 지우고 공백 하나로 이어붙이는데
--- '--' 주석을 제거하지 않는다 — 그래서 SQL 본문 안의 '--' 뒤가 전부 한 줄 주석으로 먹혀
--- 쿼리가 "UPDATE ... SET" 에서 잘렸고, 실행할 때마다 "구문 오류, 입력 끝부분" 으로 실패했다
--- (실측 000385_20260917140801: TRIP_END_DT 가 채워지지 않음. 커밋 ca547c1 에서 유입).
--- **SQL 본문에는 '--' 주석을 절대 넣지 말 것** — 설명은 이 자리(섹션 헤더 위)에 둔다.
--- [보강, 2026-09-17 최정우, 사용자 지시] 빈 문자열 방어 — [trip_end] 와 동일 근거.
---   여기서 ''이 들어가면 그 행은 다음 [trip_abend] 의 `TRIP_END_DT IS NULL` 에 다시는
---   안 걸린다(이 UPDATE 자신의 WHERE 조건이기도 하다).
--- [2026-09-17 최정우] UPD_DT 는 [trip_end] 와 달리 TRIP_END_DT 를 폴백으로 쓰지 않는다 —
---   이 UPDATE 의 두 값은 성격이 다르기 때문이다(RawLogWorker.cpp
---   FlushOpenRunsAsAbnormalEnd): TRIP_END_DT 는 그 트립이 마지막으로 확인된 **GPS 시각**,
---   UPD_DT 는 이 마감을 실행한 **벽시계 시각**이다. 빈 값일 때 GPS 시각을 끌어다 쓰면
---   "언제 마감 처리했나"라는 원래 의미가 사라지므로, 현재 시각으로 메우는 것이 맞다.
--- $1=TRIP_ID[] $2=TRIP_END_DT[] $3=UPD_DT[]
-[trip_abend]
-UPDATE RUC.PRIM_CHARGEHAND AS T
-SET
-	TRIP_END_DT = NULLIF(V.TRIP_END_DT, ''),
-	CHARGE_YN = 'N',
-	CHARGE_STATUS = CASE WHEN T.CHARGE_TYPE = 5 THEN 4 ELSE 3 END,
-	NON_CHARGE_REASON = CASE WHEN T.CHARGE_TYPE = 5 THEN 51 ELSE 61 END,
-	UPD_DT = COALESCE(NULLIF(V.UPD_DT, ''), TO_CHAR(NOW(), 'YYYYMMDDHH24MISS'))
-FROM UNNEST(
-	$1::TEXT[], $2::TEXT[], $3::TEXT[]
-) AS V(TRIP_ID, TRIP_END_DT, UPD_DT)
-WHERE T.TRIP_ID = V.TRIP_ID AND T.TRIP_END_DT IS NULL;
+-- ── 7. 트립의 기존 최대 TRIP_SEQ 조회 (읽기 전용) ─────────────────────────────────────
+-- [trip_seqmax] CRawLogWorker::QueryTripSeqMax() 가 run() 배치 시작 때 실행(2026-10-04 최정우 추가, 사용자 확정).
+--   엔진 재기동·TTL 마감 뒤 같은 trip_id 가 이어지면 새 세션이 TRIP_SEQ 를 1 부터 다시 매겨 기존 행과 PK 가
+--   충돌, 새 행이 ON CONFLICT DO NOTHING 으로 조용히 버려졌다(재현 980015 seq26~35, 212m). 기존 최댓값을 읽어
+--   다음 번호부터 잇게 한다. **TRIP_SEQ 를 바꾸는 SQL 이 아니다** — 번호 부여는 엔진만 한다.
+-- [2026-10-04 같은 날 삭제] 종전 7번 섹션 [trip_abend](TTL 마감 시 TRIP_END_DT 빈 행을 N/3(61) 로 강등)는
+--   이미 정상 확정된 행까지 강등·사유 덮어쓰기를 해서 삭제했다. TTL 마감은 [trip_end] 와 같은 UPDATE 를 쓴다.
+-- $1=TRIP_ID $2=DEVICE_KEY
+[trip_seqmax]
+SELECT COALESCE(MAX(TRIP_SEQ), 0)
+FROM RUC.PRIM_CHARGEHAND
+WHERE TRIP_ID = $1 AND DEVICE_KEY = $2;
 
--- ── 8. 트립 종료 시 TRIP_SEQ 재부여 (2026-09-22 부터 **비활성이 기본**) ─────────────
--- ※ [2026-09-22 최정우] config.ini 의 trip_seqoff/trip_seqfin 이 **빈 값**이라 이 두 섹션은
---   로드되지 않고 UpdateTripSeqOrder() 는 선두 가드에서 바로 반환한다. 아래 설명은 그 시절
---   동작을 그대로 남겨둔 것이다. 지금은 RawLogWorker 의 **워터마크 큐**(CalcChargeWatermark /
---   ReleaseChargeQueue)가 적재 시점에 TRIP_SEQ 를 GPS_SEQ 순·1..N 연속으로 확정한다 —
---   ①1~N 연속 ②GPS_SEQ 순 ③**등록 후 변경 금지** 세 요구를 동시에 만족해야 하는데, 사후
---   재부여는 PK(TRIP_ID,DEVICE_KEY,TRIP_SEQ) 자체를 UPDATE 하고 번호가 행끼리 **교환**되므로
---   외부 과금서버(60초 폴링)가 옛 번호로 마킹하면 엉뚱한 행이 조용히 갱신된다.
---   되돌리려면 config 두 줄에 섹션명을 다시 채우면 된다(재빌드 불필요).
--- [trip_seqoff]/[trip_seqfin] CRawLogWorker::UpdateTripSeqOrder() 가 [trip_end]/[trip_abend]
--- 직후 같은 TRIP_ID 목록으로 실행(2026-09-03 최정우 추가). 6개 과금유형(개방형/폐쇄형/구간단속/
--- 주정차/면제/일반도로)이 각자 독립된 상태머신으로 실시간 마감·INSERT 되다 보니, TRIP_SEQ는
--- "DB에 몇 번째로 기록됐는지"일 뿐 실제 주행 순서(START_GPS_SEQ)와 다를 수 있음 — 다른
--- 어플리케이션이 TRIP_SEQ 컬럼을 과금 순번으로 그대로 불러 쓸 예정이라(사용자 지시), 트립이
--- 완전히 끝난 시점에 START_GPS_SEQ 기준으로 TRIP_SEQ를 다시 1,2,3... 순서로 매긴다. 웹뷰어가
--- 이미 쓰고 있는 정렬 기준(NULLIF(START_GPS_SEQ,0) ASC NULLS LAST, 기존 TRIP_SEQ)과 동일하게 맞춤.
--- TRIP_SEQ가 PK(TRIP_ID,DEVICE_KEY,TRIP_SEQ) 일부라 한 번의 UPDATE로 값을 서로 맞바꾸면 중간에
--- 일시적 중복이 생겨 제약조건 위반이 나므로, 큰 오프셋을 거치는 2단계로 나눔 — [trip_seqoff]가
--- 먼저 +100000 오프셋을 줘서 기존 값과 절대 안 겹치게 한 뒤, [trip_seqfin]가 원래 자리로 되돌림.
--- 이미 순서가 맞는 트립도 재실행 시 같은 결과가 나오는 멱등 연산이라 반복 호출해도 안전.
--- $1=TRIP_ID[]
-[trip_seqoff]
-WITH RANKED AS (
-	SELECT C.TRIP_ID, C.DEVICE_KEY, C.TRIP_SEQ AS OLD_SEQ,
-		ROW_NUMBER() OVER (
-			PARTITION BY C.TRIP_ID, C.DEVICE_KEY
-			ORDER BY NULLIF(C.START_GPS_SEQ, 0) ASC NULLS LAST, C.TRIP_SEQ ASC
-		) AS NEW_SEQ
-	FROM RUC.PRIM_CHARGEHAND C
-	WHERE C.TRIP_ID = ANY($1::TEXT[])
-)
-UPDATE RUC.PRIM_CHARGEHAND T
-SET TRIP_SEQ = R.NEW_SEQ + 100000
-FROM RANKED R
-WHERE T.TRIP_ID = R.TRIP_ID AND T.DEVICE_KEY = R.DEVICE_KEY AND T.TRIP_SEQ = R.OLD_SEQ;
-
-[trip_seqfin]
-UPDATE RUC.PRIM_CHARGEHAND
-SET TRIP_SEQ = TRIP_SEQ - 100000
-WHERE TRIP_ID = ANY($1::TEXT[]) AND TRIP_SEQ > 100000;
+-- ── 8. (삭제) 트립 종료 시 TRIP_SEQ 재부여 [trip_seqoff]/[trip_seqfin] ─────────────
+-- [2026-10-04 최정우 삭제 — 사용자 지시] TRIP_SEQ 는 SQL 로 처리하지 않는다. 엔진(RawLogWorker 워터마크
+--   큐, ReleaseChargeQueue)이 확정할 때 번호를 붙여 INSERT 하며, 그 뒤로는 어떤 SQL 도 TRIP_SEQ 를
+--   바꾸지 않는다(PK 일부 — 등록 후 변경 금지). 2026-09-22 부터 config 빈 값으로 비활성이던 섹션이다.
 
 -- [server_status] CServer::UpdateServerStatus() 가 [server] status_interval(기본
 --   600초=10분) 주기로 실행 — 이 서버(SERVER_ID=[server] id, 기본 "location") 1행만 갱신.

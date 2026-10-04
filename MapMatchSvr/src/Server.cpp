@@ -92,6 +92,14 @@ public:
 		}
 	}
 
+	// 워커 유휴 시 TTL 검사 위임 — 래퍼가 전달하지 않으면 Runnable 기본 구현(빈 함수)이 불려
+	//   주기 TTL 마감이 동작하지 않는다 (2026-10-04 최정우 추가, TTL 마감 권장안 (다))
+	virtual void idle(int nThreadId)
+	{
+		if (m_pcRawLogWorker != nullptr)
+			m_pcRawLogWorker->idle(nThreadId);
+	}
+
 private:
 	CRawLogWorker					*m_pcRawLogWorker;
 };
@@ -363,32 +371,21 @@ bool CServer::Initialize(const CONFIG& stConfig)
 		LOGFMTW("trip_end session not configured — trip_end_dt update disabled");
 	}
 
-	// TTL 만료(비정상 종료) 시 개방형 미확정 레코드 마감 UPDATE SQL (2026-08-13 최정우 추가)
-	if (!stConfig.strAbnormalTripEndSession.empty())
+	// [trip_abend] 로드 삭제 — TTL 마감은 [trip_end] 로 통합 (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
+	// 트립의 기존 최대 TRIP_SEQ 조회 SQL — trip_seq 이어 매기기 (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
+	if (!stConfig.strTripSeqMaxSession.empty())
 	{
-		m_strAbnormalTripEndSQL = m_pcSQLAccessor->GetSQL(stConfig.strAbnormalTripEndSession);
-		if (m_strAbnormalTripEndSQL.empty())
-			LOGFMTW("trip_abend session=[%s] sql is empty — abnormal trip end update disabled",
-				stConfig.strAbnormalTripEndSession.c_str());
+		m_strTripSeqMaxSQL = m_pcSQLAccessor->GetSQL(stConfig.strTripSeqMaxSession);
+		if (m_strTripSeqMaxSQL.empty())
+			LOGFMTW("trip_seqmax session=[%s] sql is empty — trip_seq continuation disabled",
+				stConfig.strTripSeqMaxSession.c_str());
 	}
 	else
 	{
-		LOGFMTW("trip_abend session not configured — abnormal trip end update disabled");
+		LOGFMTW("trip_seqmax session not configured — trip_seq continuation disabled");
 	}
 
-	// 트립 종료 시 TRIP_SEQ 재부여 UPDATE SQL (2026-09-03 최정우 추가)
-	if (!stConfig.strTripSeqOffSession.empty() && !stConfig.strTripSeqFinSession.empty())
-	{
-		m_strTripSeqOffSQL = m_pcSQLAccessor->GetSQL(stConfig.strTripSeqOffSession);
-		m_strTripSeqFinSQL = m_pcSQLAccessor->GetSQL(stConfig.strTripSeqFinSession);
-		if (m_strTripSeqOffSQL.empty() || m_strTripSeqFinSQL.empty())
-			LOGFMTW("trip_seqoff session=[%s]/[%s] sql is empty — trip_seq reorder disabled",
-				stConfig.strTripSeqOffSession.c_str(), stConfig.strTripSeqFinSession.c_str());
-	}
-	else
-	{
-		LOGFMTW("trip_seqoff session not configured — trip_seq reorder disabled");
-	}
+	// [trip_seqoff]/[trip_seqfin] 로드 삭제 (2026-10-04 최정우 삭제 — 사용자 지시: trip_seq 는 SQL 로 처리하지 않고 엔진이 확정할 때 등록한다)
 
 	// 서버 상태(CPU/메모리) 하트비트 UPDATE SQL (세션 미지정·SQL 없으면 비활성) (2026-08-20 최정우 추가)
 	if (!stConfig.strServerStatusSession.empty())
@@ -581,9 +578,7 @@ bool CServer::Initialize(const CONFIG& stConfig)
 	stWorkerConfig.strUpdateSQL = m_strRawLogUpdateSQL;
 	stWorkerConfig.strChargeInsertSQL = m_strChargeInsertSQL;
 	stWorkerConfig.strTripEndUpdateSQL = m_strTripEndUpdateSQL;			// (2026-08-12 최정우 추가)
-	stWorkerConfig.strAbnormalTripEndSQL = m_strAbnormalTripEndSQL;		// (2026-08-13 최정우 추가)
-	stWorkerConfig.strTripSeqOffSQL = m_strTripSeqOffSQL;				// (2026-09-03 최정우 추가)
-	stWorkerConfig.strTripSeqFinSQL = m_strTripSeqFinSQL;				// (2026-09-03 최정우 추가)
+	stWorkerConfig.strTripSeqMaxSQL = m_strTripSeqMaxSQL;				// (2026-10-04 최정우 추가)
 	stWorkerConfig.nWorkerThreads = m_nWorkerThread;
 	stWorkerConfig.nTtlSec = m_nTtlSec;
 	stWorkerConfig.nMatchTimeoutMs = m_nMatchTimeout;
