@@ -11,6 +11,11 @@ web/venv/
 __pycache__/
 *.pyc
 
+# Logic
+!doc/*.md
+!doc/*.docx
+!*.md
+
 # Test-named files (match basenames at any directory depth)
 test*
 *test
@@ -44,6 +49,8 @@ roadnet/
 # 문서(*.md) — 저장소에는 환경설정·쿼리·소스만 올린다. 문서는 로컬 유지
 #   (사용자 지시, 2026-08-30). 파일은 지우지 않고 추적만 제외한다.
 *.md
+# 예외 — 과금 등록 로직 정본은 다른 PC 와 공유한다(2026-10-04 사용자 지시). 비밀정보 기재 금지
+!doc/과금_등록_로직_정본.md
 
 # Large road network data (별도 복사 또는 CreateData로 재생성, GitHub 100MB 제한)
 *.psf
@@ -81,3 +88,6 @@ ruc.code-*
 # OS
 .DS_Store
 Thumbs.db
+
+# 시나리오 도구 실행 산출물(park_scenario.py load 가 매번 다시 만든다)
+web/tools/zone_check/analysis/park_scenario.json
