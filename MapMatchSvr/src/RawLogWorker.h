@@ -284,7 +284,6 @@ typedef struct sParkRunSession
 	double							dfLastX;							// 직전 raw GPS 경도(하버사인 기준점)
 	double							dfLastY;
 	int								nExitTicks;							// 이탈 연속 감지 횟수(park_exitcnt 디바운스)
-	time_t							dtExitCandidateTime;				// "무존" 최초 감지 시각(park_regrace)
 	time_t							dtLastInZoneTime;					// 마지막으로 조건을 만족한 시각 — 체류 종료 기준
 	double							dfLastInZoneX;
 	double							dfLastInZoneY;
@@ -317,7 +316,7 @@ typedef struct sParkRunSession
 	sParkRunSession() :
 		dtEntryTime(0), dwEntryGpsSeq(0), dfEntryX(0.0), dfEntryY(0.0), dfAccumDistM(0.0),
 		dfLastX(0.0), dfLastY(0.0),
-		nExitTicks(0), dtExitCandidateTime(0), dtLastInZoneTime(0), dfLastInZoneX(0.0),
+		nExitTicks(0), dtLastInZoneTime(0), dfLastInZoneX(0.0),
 		dfLastInZoneY(0.0), dwLastInZoneGpsSeq(0),
 		dtLastConfirmedTime(0), dfLastConfirmedX(0.0), dfLastConfirmedY(0.0), dwLastConfirmedGpsSeq(0),
 		dfFirstOutX(0.0), dfFirstOutY(0.0), dtFirstOut(0),
@@ -336,8 +335,10 @@ typedef struct sParkCandidate
 																		//   (2026-08-28 최정우 추가)
 	double							dfX;								// 연속의 첫 좌표
 	double							dfY;
+	bool							bTripHead;							// 이 후보 첫 tick 앞의 같은 트립 tick 이 모두 정확도 초과로
+																		//   빠졌는지 — 그러면 출발 시각을 트립 첫 GPS 로 당긴다(E19)
 
-	sParkCandidate() : nTicks(0), dtTime(0), dwGpsSeq(0), dfX(0.0), dfY(0.0) { szRoadID[0] = '\0'; }
+	sParkCandidate() : nTicks(0), dtTime(0), dwGpsSeq(0), dfX(0.0), dfY(0.0), bTripHead(false) { szRoadID[0] = '\0'; }
 } PARK_CANDIDATE;
 
 // 링크 폴리라인이 주정차 폴리곤 "안"에 들어가 있는 한 구간 (2026-09-21 최정우 추가)
@@ -810,6 +811,19 @@ typedef struct sVehicleTripSession
 	double							dfSkipGapTickDistM;						// 그 tick 에 run 에 더해진 직선거리(m)
 	uint32							dwSkipGapTickGpsSeq;					// 그 tick 의 GPS_SEQ — 다른 tick 값 오용 방지
 	uint32							dwSkipGapTickRunEntry;					// 더해진 run 의 dwEntryGpsSeq (run 식별자)
+	// [2026-10-04 최정우 추가, 사용자 확정 — E18] 주정차 폴리곤 안 SKIP 좌표(RAW_VLD=false·정확도 초과·매칭 실패
+	//   무관)의 마지막 GPS_SEQ. ProcessParkingCharge() 가 기록하고, ProcessNodeStepCharge() 는 run 마지막 tick 과
+	//   현재 tick 사이에 이 순번이 있으면 run 을 끊는다(1틱 지연 확정과 순서가 어긋나도 안전하도록 순번으로 비교).
+	uint32							dwSkipInParkSeq;						// 가장 최근 폴리곤 안 SKIP tick 의 GPS_SEQ(0=없음)
+	uint32							dwSkipParkGapCutSeq;					// 그 표시로 run 을 끊은 tick 의 GPS_SEQ(SKIP 복구 차단용)
+	// [2026-10-04 최정우 추가, 사용자 확정 — E19] 주정차 체류시간은 모든 GPS 수신 시각(gps_dt) 기준 — 정확도 초과
+	//   (park_accmax) tick 은 위치 판정에는 쓰지 않되 출발·도착 시각에는 쓴다. 이를 위한 트립 단위 기록.
+	uint32							dwParkTripFirstSeq;						// 이 트립에서 주정차 판정에 들어온 첫 tick 의 GPS_SEQ
+	time_t							dtParkTripFirstTime;					//   그 tick 의 GPS 시각
+	bool							bParkAccOkSeen;							// 이 트립에서 정확도 정상 tick 을 본 적이 있는지
+	uint32							dwParkLastAccOkSeq;						// 정확도 정상인 마지막 tick 의 GPS_SEQ
+	bool							bParkHeadNear;							// 트립 첫 정상 tick 앞의 정확도 초과 tick 들이 모두
+																		//   "정확도 반경 안에 주정차 폴리곤이 있는" 위치였는지
 	// 왕복분리 반대편 링크 N틱 연속 오매칭 보정용 (2026-08-24 최정우 추가, opp_streakmax 설정).
 	//   스트릭이 시작될 때의 "진짜" 확정 링크를 앵커로 고정해두고(qwLastConfirmedLinkID 는 매 틱
 	//   갱신되므로 별도 보관 필요), 스트릭 동안 pvtUpdates 에 커밋한 인덱스를 쌓아뒀다가 앵커로
@@ -1011,6 +1025,8 @@ typedef struct sVehicleTripSession
 		dfSkipGapTickDistM(0.0),	// (2026-09-15 최정우 추가)
 		dwSkipGapTickGpsSeq(0),	// (2026-09-15 최정우 추가)
 		dwSkipGapTickRunEntry(0),	// (2026-09-15 최정우 추가)
+		dwSkipInParkSeq(0), dwSkipParkGapCutSeq(0),	// (2026-10-04 최정우 추가 — E18)
+		dwParkTripFirstSeq(0), dtParkTripFirstTime(0), bParkAccOkSeen(false), dwParkLastAccOkSeq(0), bParkHeadNear(true),	// (E19)
 		qwOppStreakAnchorLinkID(0),	// (2026-08-24 최정우 추가)
 		qwAmbigReverseRunLinkID(0),	// (2026-08-28 최정우 추가)
 		qwClampRunLinkID(0),	// (2026-08-28 최정우 추가)
@@ -1111,7 +1127,6 @@ typedef struct sRawLogWorkerConfig
 	int								nNodeExitCnt;						// config node_exitcnt — 일반도로(NODE_STEP) 이탈 확정 연속 GPS 건수(디바운스) (2026-08-24 최정우 추가)
 	int								nParkSpeedMax;						// config park_speedmax — 주정차 판정 속도 상한(km/h) (2026-08-22 최정우 추가)
 	int								nParkEntryCnt;						// config park_entrycnt — 세션 개시 연속 GPS 건수 (2026-08-22 최정우 추가)
-	int								nParkRegraceSec;					// config park_regrace — 재진입 유예시간(초) (2026-08-14 최정우 추가)
 	int								nParkTtlSec;						// config park_ttl — 마지막 신뢰 확인 후 강제 마감까지의 시간(초) (2026-08-19 최정우 추가)
 	int								nExemptRegraceSec;					// config exempt_regrace — 재진입 유예시간(초) (2026-08-14 최정우 추가)
 	int								nExemptOutMax;						// config exempt_outmax — 이 거리(m) 이상 구역 밖을 주행하면 재진입 유예 무효 (2026-09-23 최정우 추가)
@@ -1215,7 +1230,7 @@ private:
 	//   구역판정(위치, ACCURACY_M 적응형 버퍼)+SPEED_KMH(서행 컷오프)+체류시간으로 판정, 구역
 	//   이탈은 park_exitcnt 회 연속 확인 후에만 확정(디바운스) — RunMapMatch 호출 "전" 실행 (2026-08-13 최정우 추가)
 	//   2026-08-14 재진입 유예 추가: 디바운스 통과(=진짜 이탈 후보) 후에도 다른 구역이 아니라 "무존"
-	//   이면 park_regrace 초 동안 즉시 확정하지 않고 대기 — 그 안에 같은 구역으로 복귀하면 병합,
+	//   이면 park_regrace 초 동안 즉시 확정하지 않고 대기[2026-09-02 폐지·2026-10-04 설정 삭제 — 현재는 park_exitcnt 연속 확인 즉시 마감] — 그 안에 같은 구역으로 복귀하면 병합,
 	//   초과하면 확정 마감. 확정 마감 시점에 이미 다른 구역 위라면 유예 없이 곧바로 그 구역으로
 	//   새 세션 시작(경계 전환 병합 — 같은 함수 안 PARK_RUN_SESSION 개시 블록을 그대로 탄다)
 	//   2026-08-22 확장 — 규칙 2(매칭 좌표도 폴리곤 내)·규칙 4(매칭 좌표가 폴리곤 밖이면 즉시 해제)를
@@ -1239,7 +1254,8 @@ private:
 	//   무관 — 진입(현재=In, 직전틱=Out, dtOut<dtIn)과 이탈(마지막 재실=In, 첫 이탈틱=Out, dtOut>dtIn)
 	//   양쪽에 동일하게 쓴다 (사용자 지시, 2026-08-24 최정우 추가)
 	time_t InterpolateZoneCrossingTime(PZONE_INFO pstZone,
-		double dfInX, double dfInY, time_t dtIn, double dfOutX, double dfOutY, time_t dtOut);
+		double dfInX, double dfInY, time_t dtIn, double dfOutX, double dfOutY, time_t dtOut,
+		bool *pbInterpolated = nullptr);					// pbInterpolated: 경계 보간 성공 여부(2026-10-04 E20)
 	// 폐쇄형/구간단속 게이트 통과 시각 보간 — 위 InterpolateZoneCrossingTime() 과 원리는 같으나
 	//   그쪽은 폴리곤 "경계"까지의 거리 기준(주정차 전용)이고, 이쪽은 게이트라는 "점"까지의
 	//   직선거리 기준. 직전 확정 tick(dfPrevX/Y, dtPrev)~현재 tick(dfCurX/Y, dtCur) 구간을
@@ -1550,6 +1566,10 @@ private:
 
 	// @brief 링크가 주정차 단속 폴리곤 안인지 — 커버리지 복구 제외 판정 (2026-09-22 최정우 추가)
 	bool IsLinkInsideParkingPolygon(uint64 qwLinkID);
+	// 원시좌표가 주정차 폴리곤 안(경계 park_pad 이내 포함)인지 — 정책 E18(SKIP 좌표는 주정차 정보에만) 판정용
+	bool IsRawInParkingZone(double dfLon, double dfLat, int nAccuracyM);
+	// SKIP 버퍼(vtSkipRunRawLogInfo)에 폴리곤 안 SKIP 좌표가 하나라도 있는지 (E18)
+	bool IsSkipGapInParkingZone(const VEHICLE_TRIP_SESSION *pstSession);
 
 	// @brief 과금 대상 일반도로 행의 구간에 **완전히 포함**되는 N/3 일반도로 행을 제거
 	//   (2026-09-22 최정우 추가 — 사용자 지시)

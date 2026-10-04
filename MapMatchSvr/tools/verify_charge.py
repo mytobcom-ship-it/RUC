@@ -299,7 +299,10 @@ RULES = [
 
 	dict(id='P5', name='트립 과금거리가 실주행거리 대비 과다', severity='WARN',
 		why='개방형 구역 고정길이·경계보정 때문에 어느 정도 초과는 정상이나, '
-		    '20%%를 넘으면 이중계상 의심. 2026-09-23 이월 이중계상이 이 방식으로 드러났다',
+		    '20%%를 넘으면 이중계상 의심. 2026-09-23 이월 이중계상이 이 방식으로 드러났다. '
+		    '[2026-10-04 보완, 사용자 확정] 과금 합계에서 주정차(4)·구간단속(3)을 뺀다 — 주정차는 일반도로와 '
+		    '같은 구간을 함께 등록(B6·E16)하고 구간단속은 같은 구간을 일반도로 미러로도 등록하므로, 둘을 더하면 '
+		    '정책상 허용된 겹침까지 과다로 잡힌다. 일반도로·개방·폐쇄·면제만 합산',
 		sql="""
 		WITH p AS (SELECT trip_id, gps_seq, match_lat::float la, match_lon::float lo
 		             FROM ruc.prim_rawgps WHERE match_status=1),
@@ -309,7 +312,8 @@ RULES = [
 		             * power(sin(radians(lo - lag(lo) OVER w)/2),2))) AS m
 		             FROM p WINDOW w AS (PARTITION BY trip_id ORDER BY gps_seq)),
 		     실주행 AS (SELECT trip_id, sum(m) rm FROM d GROUP BY 1),
-		     과금 AS (SELECT trip_id, sum(dist_m) cd FROM ruc.prim_chargehand GROUP BY 1)
+		     과금 AS (SELECT trip_id, sum(dist_m) cd FROM ruc.prim_chargehand
+		               WHERE charge_type NOT IN ('3','4') GROUP BY 1)
 		SELECT 과금.trip_id, round(실주행.rm)::int AS 실주행_m, 과금.cd::int AS 과금_m,
 		       round(과금.cd - 실주행.rm)::int AS 초과_m,
 		       round((과금.cd/실주행.rm - 1) * 100)::int AS 초과율

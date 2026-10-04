@@ -139,7 +139,6 @@ private:
 	int								m_nParkExitCnt;						// [charge] park_exitcnt — 구역 이탈 확정 연속 GPS 건수(디바운스) (2026-08-13 최정우 추가)
 	int								m_nZoneExitCnt;						// [charge] zone_exitcnt — 게이트형 다중링크 구역 이탈 확정 연속 GPS 건수(디바운스), 0=비활성 (2026-09-21 최정우 추가)
 	int								m_nNodeExitCnt;						// [charge] node_exitcnt — 일반도로(NODE_STEP) 이탈 확정 연속 GPS 건수(디바운스) (2026-08-24 최정우 추가)
-	int								m_nParkRegraceSec;					// [charge] park_regrace — 재진입 유예시간(초) (2026-08-14 최정우 추가)
 	int								m_nParkTtlSec;						// [charge] park_ttl — 마지막 신뢰 확인 후 강제 마감까지의 시간(초) (2026-08-19 최정우 추가)
 	int								m_nExemptRegraceSec;				// [charge] exempt_regrace — 재진입 유예시간(초) (2026-08-14 최정우 추가)
 	int								m_nExemptOutMax;					// [charge] exempt_outmax — 이 거리(m) 이상 구역 밖을 주행하면 재진입 유예 무효 (2026-09-23 최정우 추가)

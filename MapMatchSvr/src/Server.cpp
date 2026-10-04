@@ -134,7 +134,6 @@ CServer::CServer() :
 	m_nParkExitCnt(CFG_DEF_PARK_EXITCNT),
 	m_nZoneExitCnt(CFG_DEF_ZONE_EXITCNT),
 	m_nNodeExitCnt(CFG_DEF_NODE_EXITCNT),
-	m_nParkRegraceSec(CFG_DEF_PARK_REGRACE),
 	m_nParkTtlSec(CFG_DEF_PARK_TTL),
 	m_nExemptRegraceSec(CFG_DEF_EXEMPT_REGRACE),
 	m_nExemptOutMax(CFG_DEF_EXEMPT_OUTMAX),
@@ -246,7 +245,6 @@ bool CServer::Initialize(const CONFIG& stConfig)
 	m_nNodeExitCnt = stConfig.nNodeExitCnt;						// (2026-08-24 최정우 추가)
 	m_nParkSpeedMax = stConfig.nParkSpeedMax;					// (2026-08-22 최정우 추가)
 	m_nParkEntryCnt = stConfig.nParkEntryCnt;					// (2026-08-22 최정우 추가)
-	m_nParkRegraceSec = stConfig.nParkRegraceSec;					// (2026-08-14 최정우 추가)
 	m_nParkTtlSec = stConfig.nParkTtlSec;							// (2026-08-19 최정우 추가)
 	m_nExemptRegraceSec = stConfig.nExemptRegraceSec;				// (2026-08-14 최정우 추가)
 	m_nExemptOutMax = stConfig.nExemptOutMax;						// (2026-09-23 최정우 추가)
@@ -600,7 +598,6 @@ bool CServer::Initialize(const CONFIG& stConfig)
 	stWorkerConfig.nNodeExitCnt = m_nNodeExitCnt;				// (2026-08-24 최정우 추가)
 	stWorkerConfig.nParkSpeedMax = m_nParkSpeedMax;				// (2026-08-22 최정우 추가)
 	stWorkerConfig.nParkEntryCnt = m_nParkEntryCnt;				// (2026-08-22 최정우 추가)
-	stWorkerConfig.nParkRegraceSec = m_nParkRegraceSec;			// (2026-08-14 최정우 추가)
 	stWorkerConfig.nParkTtlSec = m_nParkTtlSec;					// (2026-08-19 최정우 추가)
 	stWorkerConfig.nExemptRegraceSec = m_nExemptRegraceSec;		// (2026-08-14 최정우 추가)
 	stWorkerConfig.nExemptOutMax = m_nExemptOutMax;				// (2026-09-23 최정우 추가)

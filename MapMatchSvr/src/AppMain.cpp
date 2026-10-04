@@ -369,10 +369,7 @@ bool Initialize(string config_file, PCONFIG pstConfig)
 		pstConfig->nParkSpeedMax = CFG_DEF_PARK_SPEEDMAX;
 	if (pstConfig->nParkAccMax < 0)
 		pstConfig->nParkAccMax = CFG_DEF_PARK_ACCMAX;
-	// [charge] park_regrace (단위: sec) — 재진입 유예시간 (2026-08-14 최정우 추가)
-	cIniReader.GetProfileInt("charge", "park_regrace", CFG_DEF_PARK_REGRACE, pstConfig->nParkRegraceSec);
-	if (pstConfig->nParkRegraceSec < 0)
-		pstConfig->nParkRegraceSec = CFG_DEF_PARK_REGRACE;
+	// [charge] park_regrace 삭제 (2026-10-04 최정우 삭제, 사용자 확정 — 2026-09-02 부터 판정에 쓰이지 않던 설정) — 진출은 park_exitcnt 연속 확인으로 즉시 마감한다
 	// [charge] park_ttl (단위: sec) — 마지막 신뢰(RAW_VLD=true) 확인 후 좌표 없이 강제 마감까지의
 	//   시간(0=비활성) (2026-08-19 최정우 추가)
 	cIniReader.GetProfileInt("charge", "park_ttl", CFG_DEF_PARK_TTL, pstConfig->nParkTtlSec);
@@ -597,9 +594,9 @@ static void LogStartupConfig(const CONFIG& stConfig)
 	LOGFMTI("[charge] gate_reload=[%d]s park_pad=[%d]m park_accmax=[%d]m park_speedmax=[%d]km/h",
 		stConfig.nGateReloadSec, stConfig.nParkPad, stConfig.nParkAccMax, stConfig.nParkSpeedMax);
 	LOGFMTI("[charge] park_entrycnt=[%d] park_exitcnt=[%d] node_exitcnt=[%d] zone_exitcnt=[%d] "
-		"park_regrace=[%d]s park_ttl=[%d]s exempt_regrace=[%d]s exempt_outmax=[%d]m",
+		"park_ttl=[%d]s exempt_regrace=[%d]s exempt_outmax=[%d]m",
 		stConfig.nParkEntryCnt, stConfig.nParkExitCnt, stConfig.nNodeExitCnt, stConfig.nZoneExitCnt,
-		stConfig.nParkRegraceSec, stConfig.nParkTtlSec, stConfig.nExemptRegraceSec,
+		stConfig.nParkTtlSec, stConfig.nExemptRegraceSec,
 		stConfig.nExemptOutMax);
 	LOGFMTI("[feeder] limit=[%d] fetch_interval=[%d]ms queue_pause/max=[%d]/[%d] "
 		"queue_busymin/max=[%d]/[%d]ms",
