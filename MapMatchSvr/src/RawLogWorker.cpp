@@ -19,6 +19,11 @@
 
 using namespace zsummer::log4z;
 
+// [2026-10-04 최정우 추가, 사용자 확정 — 정책 E16] 주정차 폴리곤 안 일반도로 억제 여부. false = 폴리곤 안이라도
+//   일반도로로 판정되면 등록한다(ProcessNodeStepCharge 의 폴리곤 억제 해제 + FillUncoveredLinkRows 의 폴리곤 안
+//   링크 제외 해제). true 로 바꾸면 종전 동작(B2·B4)으로 돌아간다.
+static const bool MM_PARK_SUPPRESS_NODESTEP = false;
+
 // NON_CHARGE_REASON 코드별 메시지 — DataDefine.h 의 NCR_* 상수와 1:1 대응, MapMatch.cpp 의
 //   ErrorCodeTable/m_cCodeMap 과 동일 패턴(CCodeMap::GetValue) 으로 로그에 사람이 읽을 수 있는
 //   사유를 남긴다 (2026-09-11 최정우 추가)
@@ -10109,6 +10114,20 @@ void CRawLogWorker::ProcessNodeStepCharge(int nThreadId, const sRawLogInfo& stRa
 	{
 		bInParkingZone = false;
 	}
+	// [2026-10-04 최정우 수정, 사용자 확정 — 정책 E16] **주정차 폴리곤 안이라도 일반도로로 판정되면 일반도로로
+	//   등록한다.** 종전에는 폴리곤 안(매칭좌표 기준) 동안 일반도로 run 을 억제·보류하고, 주행해서 빠져나온
+	//   경우만(B2) 안쪽을 마지막 안쪽 tick 까지 따로 등록했으며, 폴리곤 안에서 트립이 끝나면(B4) 경계까지만
+	//   등록했다. 이제 억제 자체를 끄므로 일반도로 run 은 폴리곤을 의식하지 않고 다른 도로와 똑같이 이어진다
+	//   (안에서 끝나는 트립도 마지막 tick 까지). 주정차 판정·등록(ProcessParkingCharge)은 그대로이고 두 행은
+	//   GPS_SEQ 범위가 겹쳐도 된다(B6). 접촉 버퍼·폴리곤 통과(B2)·진출 경계 이월 블록은 bInParkingZone 이
+	//   항상 false 라 동작하지 않는다(코드는 되돌리기용으로 남김). 정지 tick 표류 제외는 아래 누적부에 옮겼다.
+	// 되돌리는 법: MM_PARK_SUPPRESS_NODESTEP 을 true 로(FillUncoveredLinkRows 의 폴리곤 제외도 같이 살아난다).
+	if (!MM_PARK_SUPPRESS_NODESTEP)
+	{
+		bInParkingZone = false;
+		pstSession->bNodeStepParkTouch = false;
+		pstSession->nNodeStepParkExitTicks = 0;
+	}
 
 	// 구간단속 마감 시 보류해둔 일반도로 미러 — 이번 tick에 접촉 자체가 없으면(또는 접촉이 이미
 	//   끝났으면) 더는 인수인계 구간을 기다릴 이유가 없다. 아래 인수인계 로직은 접촉 중일 때만
@@ -11119,7 +11138,12 @@ void CRawLogWorker::ProcessNodeStepCharge(int nThreadId, const sRawLogInfo& stRa
 			// [버그 수정, 2026-09-11 최정우] 정지 중(bSameRawAndHeadingAsPrev) GPS 저주파 위치표류도
 			//   같은 이유로 제외 — 차가 안 움직이는데 세그먼트 재투영이 매 tick 완만히 다른 점으로
 			//   튀어 dist_m 이 과다 계상되는 걸 막는다(재매칭 검증으로 최대 20m 확인).
-			if (!stMatchLinkInfo.bReverseSuspect && !stMatchLinkInfo.bSameRawAndHeadingAsPrev)
+			// [2026-10-04 최정우 추가 — E16] 폴리곤 안(매칭좌표) 정지 tick(속도<1)은 거리를 누적하지 않는다 — 종전
+			//   접촉 버퍼(bTouchStill)가 하던 주차 중 GPS 표류 제외를, 억제를 끈 뒤 일반도로 run 에 그대로 옮긴 것.
+			//   폴리곤 밖은 종전 동작 그대로다.
+			const bool bParkStillTick = bMatchInParkingZoneNow
+				&& (stRawLogInfo.fSpeed >= 0.0f) && (stRawLogInfo.fSpeed < 1.0f);
+			if (!stMatchLinkInfo.bReverseSuspect && !stMatchLinkInfo.bSameRawAndHeadingAsPrev && !bParkStillTick)
 			{
 				POINT stPrev, stCur;
 				stPrev.dfX = stRun.dfLastX;  stPrev.dfY = stRun.dfLastY;
@@ -12733,7 +12757,7 @@ void CRawLogWorker::ProcessNodeStepCharge(int nThreadId, const sRawLogInfo& stRa
  *        일반도로로 등록한다(A2 억제 폐지). 구간단속 링크는 지금처럼 구간단속 + 미러.
  *   B3 [신규] 진출 쪽 매칭이 직전 신뢰 tick 에서 경과시간 안에 도달할 수 없는 위치면 SKIP 하고,
  *        그 tick 은 주정차 체류에 포함한다.
- *   B4 [확정, 2026-10-04 사용자] 트립이 구역 안에서 끝나면 구역 안 구간은 일반도로에 넣지 않는다 —
+ *   B4 [**E16 으로 대체, 2026-10-04** — 이제 안쪽도 도착 tick 까지 일반도로] 트립이 구역 안에서 끝나면 구역 안 구간은 일반도로에 넣지 않는다 —
  *        그 구간은 **주정차 정체시간**이다: 진입 경계(출발이 같은 폴리곤 안이면 출발 tick)부터 도착
  *        tick 까지. 현행 코드가 이미 이렇게 동작한다(시나리오 S4 진입 경계~seq128 373s, S9 출발~도착
  *        372s). 체류가 base_parking_fine 최소시간 미만이면 주정차 행도 없으므로 그 안쪽 주행은 어디에도
@@ -12853,6 +12877,9 @@ void CRawLogWorker::ProcessNodeStepCharge(int nThreadId, const sRawLogInfo& stRa
  *        따른다(일반도로이므로 짧은 보류 대상). 변경 지점: ReleaseChargeQueue() 정렬 기준(START -> 큐 적재
  *        순)과 CalcChargeWatermark()(유형별 준비 판정), FillUncoveredLinkRows() 흡수 대상(미방출 행 한정),
  *        verify_charge.py S2 규칙. 정본 문서 doc/과금_등록_로직_정본.md 6·10절.
+ *   E16 [구현, 2026-10-04 사용자 확정] **폴리곤 안이라도 일반도로로 판정되면 항상 일반도로로 등록**(B2·B4 대체).
+ *        MM_PARK_SUPPRESS_NODESTEP=false — 일반도로 폴리곤 억제 해제, 커버리지 복구의 폴리곤 안 링크 제외 해제,
+ *        폴리곤 안 정지 tick(속도<1) 거리 누적 제외. 주정차 행은 그대로(B6 겹침 허용). 실측은 정본 7절.
  *   E15 [구현, 2026-10-04 사용자 확정] 게이트형(폐쇄식·구간단속) 거리 = 진입~진출 게이트 사이 구역 선 길이(CalcZoneSpanM),
  *        체류 = 진출 시각 − 진입 시각(게이트 통과 보간, 종전 유지), 평균속도 = 거리 ÷ 체류. 폴리곤 안 구간단속(B7)과
  *        그 미러에도 같은 값이 쓰인다. 일반도로 링크 형상 측정은 실주행 +0.00% 라 보류(정본 10절).
@@ -14866,7 +14893,7 @@ int CRawLogWorker::FillUncoveredLinkRows(int nThreadId, VEHICLE_TRIP_SESSION *ps
 		const uint64 qwLink = pstSession->vtTripPathLinks[i].qwLinkID;
 		const bool bTarget = m_stConfig.pcChargeDataLoader->IsCase3EligibleRoadKind(qwLink)
 			&& (setCovered.find(qwLink) == setCovered.end())
-			&& !IsLinkInsideParkingPolygon(qwLink);
+			&& !(MM_PARK_SUPPRESS_NODESTEP && IsLinkInsideParkingPolygon(qwLink));
 		if (!bTarget) { ++i; continue; }
 
 		// 연속한 미덮임 구간을 한 행으로 묶는다
@@ -14878,7 +14905,7 @@ int CRawLogWorker::FillUncoveredLinkRows(int nThreadId, VEHICLE_TRIP_SESSION *ps
 			const uint64 qwCur = pstSession->vtTripPathLinks[i].qwLinkID;
 			if (!m_stConfig.pcChargeDataLoader->IsCase3EligibleRoadKind(qwCur)) break;
 			if (setCovered.find(qwCur) != setCovered.end()) break;
-			if (IsLinkInsideParkingPolygon(qwCur)) break;
+			if (MM_PARK_SUPPRESS_NODESTEP && IsLinkInsideParkingPolygon(qwCur)) break;
 			PLINK_INFO pstLink = m_stConfig.pcDataLoader->GetLinkInfo(qwCur);
 			if (pstLink == nullptr) break;
 			dfDistM += pstLink->dfLen;
