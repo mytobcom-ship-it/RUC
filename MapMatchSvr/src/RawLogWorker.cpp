@@ -8931,7 +8931,10 @@ void CRawLogWorker::ProcessSpeedZoneCharge(int nThreadId, const sRawLogInfo& stR
 	//        (폐쇄형과 같은 형태. 구간단속의 "게이트 이상이면 미적재" 정책을 바꾸는 것이다)
 	//     ② 미러만 만들되 그 구간을 일반도로 run 에서 확실히 빼낸다(IsLinkNodeStepEligible 연동)
 	//     ③ 현행 유지 — 게이트를 못 지난 구간단속 구역은 일반도로로만 청구한다
-	//   현재는 ③ 이다. 링크→구간단속 구역 조회가 필요하면
+	//   **③ 으로 확정(2026-10-02 사용자 결정).** 구간단속은 정상 통과 때도 일반도로 미러를 만드는
+	//   것이 정책이라 일반도로 청구 자체는 틀리지 않고, 진입게이트 시각이 없으면 평균속도(위반 판정)
+	//   근거가 없다. ①·② 는 사용자가 정책을 바꾸라고 할 때만 재착수할 것.
+	//   링크→구간단속 구역 조회가 필요하면
 	//   CChargeDataLoader::GetSpeedZoneRoadIdByLinkId() 가 남아 있다.
 }
 
