@@ -36,6 +36,8 @@
 using namespace zsummer::log4z;
 using namespace std;
 
+// [보완] 아래 4개는 config.ini 키가 아니라 ConfigDefaults.h 값을 그대로 쓰는 컴파일 상수다 —
+//   ConfigDefaults.h 의 "[server] run_wait" 등 키 표기와 달리 config.ini 에서 바꿀 수 없다 (2026-10-06 최정우 주석 추가)
 // 단위: ms (2026-07-11 최정우 주석 추가)
 #define SERVER_RUN_WAIT					CFG_DEF_RUN_WAIT
 // 단위: sec (2026-07-11 최정우 주석 추가)
@@ -84,8 +86,10 @@ private:
 	CLoggerManager					*m_pcLoggerManager;					// 로그 관리 클래스
 	CDataLoader						*m_pcDataLoader;					// 기반 데이터 클래스
 	CChargeDataLoader					*m_pcChargeDataLoader;				// 과금 게이트 데이터 클래스 (2026-08-12 최정우 추가)
+																		//   [보완] 게이트·구역(폴리곤 포함)·주정차 과태료 최소시간 캐시 (2026-10-06 최정우 주석 추가)
 	CThreadPool						*m_pcThreadPool;					// 스레드 풀
 	CProcessManager					*m_pcProcessManager;				// GPS 정보 맵 매칭 처리 클래스
+																		//   [보완] 워커 스레드 수(m_nWorkerThread)만큼의 배열 — 워커는 nThreadId 로 자기 것만 쓴다 (2026-10-06 최정우 주석 추가)
 	CRawLogFetcher					*m_pcRawLogFetcher;					// 원시 GPS DB 폴링 클래스
 	CRawLogWorker					*m_pcRawLogWorker;					// 원시 GPS batch 처리 워커
 
@@ -111,6 +115,8 @@ private:
 	int								m_nLogKeepDay;						// 로그 보관일
 	int								m_nWorkerThread;					// 스레드 풀 개수
 	pthread_t						m_hTimerThread;						// 로그 관리 Thread 핸들
+																		//   [보완] 1초 주기 ProcessPeriodSec() — 로그 정리 외에 게이트·구역·과태료 캐시 재조회,
+																		//   좀비 PROCESSING 회수, CPU 샘플·하트비트도 이 스레드가 돈다 (2026-10-06 최정우 주석 추가)
 	string							m_strSQLFile;						// SQL 파일
 	string							m_strDBHost;						// DB 연결 Host
 	int								m_nDBPort;							// DB 연결 Port
@@ -123,6 +129,7 @@ private:
 	string							m_strRawLogSelectSQL;				// 조회·예약 SQL (UPDATE RETURNING)
 	string							m_strRawLogUpdateSQL;				// 결과 갱신 SQL
 	string							m_strChargeInsertSQL;				// 개방형 게이트 통과 과금 INSERT SQL, 비어 있으면 비활성
+																		//   [정정] 6개 CHARGE_TYPE 공용 [charge_insert] (2026-10-06 최정우 주석 수정)
 	string							m_strTripEndUpdateSQL;				// 트립 종료 시 trip_end_dt UPDATE SQL, 비어 있으면 비활성 (2026-08-12 최정우 추가)
 	string							m_strTripSeqMaxSQL;					// [trip_seqmax] 트립의 기존 최대 TRIP_SEQ 조회 (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
 	string							m_strGateSelectSQL;				// 과금 게이트 전량 조회 SQL (2026-08-12 최정우 추가)
@@ -130,6 +137,7 @@ private:
 	string							m_strParkFineSelectSQL;				// 주정차 과태료 최소 FROM_MIN 조회 SQL, 비어 있으면 체류시간 임계 비활성 (2026-08-24 최정우 추가)
 	int								m_nGateReloadSec;					// [charge] gate_reload — 게이트·구역 캐시 재조회 주기(sec, 0=재조회 없음) (2026-08-12 최정우 추가)
 	time_t							m_dtLastGateReload;					// 마지막 게이트 캐시 재조회 시각 (2026-08-12 최정우 추가)
+																		//   게이트·구역·과태료 3종 공용 (2026-10-06 최정우 주석 추가)
 	int								m_nStaleSec;				// [server] stale_sec — 좀비 PROCESSING 회수 주기 겸 임계(sec, 0=비활성) (2026-08-29 최정우 추가)
 	time_t							m_dtLastStaleRecover;				// 마지막 좀비 PROCESSING 회수 시각 (2026-08-29 최정우 추가)
 	string							m_strStaleRecoverSQL;				// 좀비 PROCESSING 운영 중 회수 SQL (2026-08-29 최정우 추가)
@@ -157,18 +165,22 @@ private:
 	int								m_nQueueBusyMin;					// 큐 혼잡 시 조회 대기 최소 (ms)
 	int								m_nQueueBusyMax;					// 큐 혼잡 시 조회 대기 최대 (ms)
 	int								m_nTtlSec;							// trip_id 세션 유지 시간 (초)
+																		//   [정정] 세션 키는 DEVICE_KEY (2026-10-06 최정우 주석 수정)
 	int								m_nShutdownWait;					// 종료 시 워커 처리 완료 대기 (ms)
 	int								m_nRetryMax;						// release 재시도 상한 (0=무제한)
 	int								m_nThreads;							// 스레드 풀 개수
+																		//   [보완] 대입만 되고 읽는 곳 없음 — 실제 풀 크기는 m_nWorkerThread (2026-10-06 최정우 주석 추가)
 	string							m_strDataFile;						// 데이터 바이너리 파일명 및 경로
 	uint8							m_nCoordinateType;					// GPS 좌표 측지계
 	sint16							m_nRadius;							// 맵 매칭 유효 거리
+																		//   [mapmatch] radius — 기본 검색 반경(m) (2026-10-06 최정우 주석 추가)
 	uint16							m_nMaxStep;							// 연속 맵매칭시 연결 링크 확인 최대 개수
 	double							m_dfHopLenRatio;					// hoppenalty_lenratio (2026-08-23 최정우 추가)
 	double							m_dfHopPenalty;						// hoppenalty — depth 1단계당 가산 비용(m) (2026-08-22 최정우 추가)
 	int								m_nParkSpeedMax;					// park_speedmax — 주정차 판정 속도 상한(km/h) (2026-08-22 최정우 추가)
 	int								m_nParkEntryCnt;					// park_entrycnt — 세션 개시 연속 GPS 건수 (2026-08-22 최정우 추가)
 	uint32							m_dwMaxDistance;					// 연속 맵 매칭시 좌표간 최대 유효 거리
+																		//   [보완] [mapmatch] distance — heading 유효거리(m). 워커 nHeadingMaxDist 로도 전달 (2026-10-06 최정우 주석 추가)
 	int								m_nMatchTimeout;					// 1 GPS 맵매칭 처리 임계 (ms, 0=비활성, #16)
 	double							m_dfRadiusScale;					// config radius_scale — 검색반경 = scale × ACCURACY_M (2026-07-08 최정우)
 	int								m_nRadiusMin;						// config radius_min — 적응형 검색 반경 하한 (m) (2026-07-08 최정우)

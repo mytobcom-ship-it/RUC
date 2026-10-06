@@ -20,7 +20,8 @@ CContinueMapMatch::~CContinueMapMatch()
 }
 
 /**
- * @brief 연속 맵매칭 고도 보조 점수 설정 (config altitude_*)
+ * @brief 연속 맵매칭 고도 보조 점수 설정 (config [mapmatch] alt_gap/alt_penalty/alt_weight/alt_slope)
+ *        (2026-10-06 최정우 주석 수정 — 종전 "altitude_*" 는 2026-07-21 키 이름 변경 전 표기)
  * @param[in] stAltConfig 고도 점수 설정 — Server→ProcessManager→MapMatch→ContinueMapMatch 전달
  * @return void
 */
@@ -127,6 +128,8 @@ bool CContinueMapMatch::StartMapMatch(CDataLoader *pcDataLoader, SGMT_MATCH_INPU
 	//   다시 채워** 넘길 것. 현재 호출부는 전부 이 규칙을 지키고 있어 무해하다.
 	//   참조 대신 값 전달로 바꾸는 근본 수정은 하위 호출 전부가 "이미 스케일된 상태"를 전제로
 	//   짜여 있어 핵심 매칭 함수 전체 재설계가 필요 — 보류 중인 별도 과제다.
+	//   [정정] 위 "MapMatch.cpp:271" 은 작성 당시 줄 번호라 지금은 어긋난다 — CMapMatch::ContinueMapMatch()
+	//   안의 Begin 병행폴백 블록(stBeginSgmtMatchInput 선언부)을 가리킨다 (2026-10-06 최정우 주석 수정)
 	stSgmtMatchInput.stPoint.dfX *= 360000.0;
 	stSgmtMatchInput.stPoint.dfY *= 360000.0;
 	// 같은 링크 노이즈 보정 기준점도 동일 내부 스케일로 변환 (2026-07-22 최정우 추가)
@@ -210,6 +213,8 @@ bool CContinueMapMatch::StartMapMatch(CDataLoader *pcDataLoader, SGMT_MATCH_INPU
 				const double dfLenRatio = m_pcDataLoader->GetHopLenRatio();
 				// [가독성, 2026-09-15 최정우] 반복자 이름을 it -> itEntry 로 분리한다. 바깥
 				//   136행에 같은 이름의 depth 목록 반복자가 있어 -Wshadow 경고가 났다. 지금은
+				//   [정정] "136행" 은 당시 줄 번호 — 바깥 반복자는 이 함수의 "같은 depth 링크 UID 목록 맵 매칭"
+				//   루프의 listDepthLinkInfo::iterator it 이다 (2026-10-06 최정우 주석 수정)
 				//   안쪽이 이 블록 안에서만 살아 동작은 정상이지만, 블록 경계가 바뀌거나 코드가
 				//   옮겨지면 조용히 바깥 반복자를 건드리게 되는 자리다.
 				for (list<MATCH_ENTRY>::iterator itEntry = listMatchEntryList.begin();
@@ -238,6 +243,8 @@ bool CContinueMapMatch::StartMapMatch(CDataLoader *pcDataLoader, SGMT_MATCH_INPU
 			//   방위각 부적합(비용이 상한 도달)이면 직전 링크 위 내부 수선발이어도 회전·교차로일 수 있어
 			//   depth 확장해 연결 링크와 비교(2026-07-18 최정우 추가) — 직전 링크에 계속 고정되는 것 방지.
 			//   (두 경우 모두, 확장해도 다음 depth 후보가 더 나쁘면 sort 후 그대로 이 후보가 선택되므로 안전) (2026-07-15 최정우 추가)
+			//   정리하면 확정 조건은 "(경계 클램프 아님 AND 방위각 부적합 아님) OR 최대 depth 도달" 이다.
+			//   첫 줄의 "더 깊이 갈 수 없으면" 은 뒤쪽 OR 조건(i == nSearchStep)을 가리킨다 (2026-10-06 최정우 주석 추가)
 			if ((!IsBoundaryClamped(listAllEntryList.front())
 					&& !IsPoorAngleFit(listAllEntryList.front())) || (i == nSearchStep))
 			{
@@ -322,6 +329,10 @@ bool CContinueMapMatch::IsBoundaryClamped(const MATCH_ENTRY& stMatchEntry)
  *   dfAngleCost = dfCost - dfIntersectLenSgmt (방위각 비용만 분리, GISUtil::SgmtMatch 참고).
  *   상한 도달 = 방향이 심하게 어긋남에도 직전 링크 위에 내부 수선발이 잡혀 depth 확장이
  *   안 되던 경우(회전·교차로 구간에서 직전 링크에 계속 고정되는 현상) 방지용.
+ *   [보완] "방향이 거의 안 맞음" 은 과장이다 — 상한 15m 는 20km/h 이상(가중치 1.0)에서 각도차 15° 만
+ *   돼도 도달한다. 반대로 SgmtMatch 의 각도차는 정·역 중 작은 쪽이라 최대 90° 이므로, 가중치가
+ *   1/6 미만인 저속(약 7km/h 이하)과 heading 없음(bHasHeading=false)에서는 이 판정이 절대 true 가
+ *   되지 않는다 (2026-10-06 최정우 주석 수정)
 */
 bool CContinueMapMatch::IsPoorAngleFit(const MATCH_ENTRY& stMatchEntry)
 {
@@ -413,6 +424,9 @@ bool CContinueMapMatch::LinkSgmtMapMatch(SGMT_MATCH_INPUT& stSgmtMatchInput,
 		//   dfCost = INTERSECT_LEN + 방위각비용 + CalcAltRoadPenalty(Δalt, ROAD_TYPE)
 		// 값이 작을수록 우선 — 보너스(음수)면 동일 거리·방향 후보보다 유리
 		//   예) 기본 25 + 고도−3 = 22 → 같은 고가·Δ6m 후보가 일반도로(+10)보다 선택
+		//   [정정] 위 예의 "−3" 은 현행 공식과 맞지 않는다 — |Δalt|≤alt_gap 이고 ROAD_TYPE 이 직전과
+		//   같으면 −alt_penalty(config 10 → −10)가 붙는다(GISUtil::CalcAltRoadPenalty). 즉 25−10=15 vs
+		//   25+10=35 (2026-10-06 최정우 주석 수정)
 		//   (2026-07-08 최정우 추가)
 		stMatchEntry.dfAngleCost = stSgmtMatchRes.dfCost - stSgmtMatchRes.dfIntersectLenSgmt;
 		stMatchEntry.dfAltAdj = m_cGISUtil.CalcAltRoadPenalty(stSgmtMatchInput, pstLinkInfo->nRoadType, m_stAltitudeConfig);
@@ -462,6 +476,10 @@ bool CContinueMapMatch::LinkSgmtMapMatch(SGMT_MATCH_INPUT& stSgmtMatchInput,
 					//   listAllEntryList 정렬(operator<)로 자연스럽게 우선 선택되게 한다 (2026-08-19 최정우 추가)
 					//   공식 짝이 없으면(CreateData 페어링 실패) 같은 도로명 인접 링크로 대체 탐색
 					//   (2026-08-26 최정우 추가)
+					//   [정정] 이 분기(같은 링크 역행 + bReverseFit)에서는 짝 링크 쪽이 실행될 수 없다 — 위에서
+					//   "bReverseFit && qwOppositeLinkID != 0" 후보를 이미 continue 로 버렸으므로(2026-08-24)
+					//   여기 도달하면 qwOppositeLinkID 는 항상 0 이고 실제로는 TryNearbyRoadNameCandidate 만 돈다.
+					//   짝 링크 평가는 아래 "링크가 바뀌는 후보(진입 링크)" 분기에서만 실행된다 (2026-10-06 최정우 주석 수정)
 					if (bAllowOppositeCheck)
 					{
 						if (pstLinkInfo->qwOppositeLinkID != 0)
@@ -689,6 +707,8 @@ void CContinueMapMatch::TryNearbyRoadNameCandidate(SGMT_MATCH_INPUT& stSgmtMatch
 	//   반대방향 평행 링크를 영영 못 찾는데, 그 링크를 찾는 것이 이 함수의 존재 목적이다.
 	//   에러 로그도 안 남아 지금까지 드러나지 않았다.
 	//   나머지 호출부 3곳(BeginMapMatch.cpp:241/529, 아래 BridgeNearbyLinkStarts)은 전부 도 단위로
+	//   [정정] "241/529" 는 당시 줄 번호 — CBeginMapMatch::StartMapMatch()·FindGeomNearest() 의
+	//   GetNearGridID 호출(둘 다 ×360000 변환 직전)을 가리킨다 (2026-10-06 최정우 주석 수정)
 	//   넘기고 있어 이 한 곳만 어긋나 있었다. 호출측 구조체를 건드리지 않도록 복사본을 쓴다
 	//   (SGMT_MATCH_INPUT 은 POD 스칼라뿐이라 복사 비용 무시 가능).
 	SGMT_MATCH_INPUT stGridInput = stSgmtMatchInput;		// nRadius 등 나머지 조건은 그대로 유지
@@ -825,6 +845,8 @@ bool CContinueMapMatch::GetLinkDepthInfo(set<uint64> *psetSearchHistoryLinkList,
 			//   맵매칭이 안 됨(2026-08-14 최정우 수정 — "소스상 문제" 검토 중 발견). dwTurnOffset/
 			//   nTurnCount 가 0이면 아래에서 dwStartTurnOffset==dwEndTurnOffset 이 되어 다음 depth
 			//   확장은 자연히 안 일어나므로(line 414의 for 루프가 빈 범위) 별도 분기 불필요
+			//   [정정] "line 414" 는 당시 줄 번호 — 이 함수의 회전정보 순회 루프
+			//   (for i=dwStartTurnOffset..dwEndTurnOffset)를 가리킨다 (2026-10-06 최정우 주석 수정)
 			stDepthLinkInfoData.qwLinkID = pstTurnInfo->qwOutLinkID;
 			stDepthLinkInfoData.dwStartTurnOffset = pstLinkInfo->dwTurnOffset;
 			stDepthLinkInfoData.dwEndTurnOffset = stDepthLinkInfoData.dwStartTurnOffset + pstLinkInfo->nTurnCount;
@@ -886,6 +908,9 @@ bool CContinueMapMatch::GetLinkDepthInfo(set<uint64> *psetSearchHistoryLinkList,
 
 /**
  * @brief 막다른 링크 끝점 근처에서 다른 링크의 시작점을 지리적으로 찾아 depth 후보에 추가
+ *        [정정] "막다른 링크" 에 한정되지 않는다 — 2026-08-20 이후 GetLinkDepthInfo() 는 회전정보
+ *        유무와 무관하게, 저속(MM_SPEED_LOW_KMH 이하)이 아니면 확장하는 **모든** 링크 끝점에서 이
+ *        함수를 부른다 (2026-10-06 최정우 주석 수정)
  * @param[in] qwFromLinkID 확장 중이던(막다른) 링크 ID — 자기 자신 제외, 경로 역추적 부모로 기록
  * @param[in] dfEndRawX qwFromLinkID 끝 노드의 경도(WGS84, **도 단위** — 내부 스케일 미변환 원본)
  * @param[in] dfEndRawY qwFromLinkID 끝 노드의 위도(WGS84, **도 단위** — 내부 스케일 미변환 원본)
@@ -900,6 +925,9 @@ bool CContinueMapMatch::GetLinkDepthInfo(set<uint64> *psetSearchHistoryLinkList,
  *   곧 그 링크의 시작 노드 좌표와 같다. BeginMapMatch 의 그리드 반경 탐색과 동일한 GetGridID/
  *   GetNearGridID 조합을 재사용하되, 전체 매칭 비용 계산 없이 "링크 시작점이 근처에 있는가"만
  *   가볍게 확인 — 그래프가 막힌 경우에만 호출되므로 평소 매칭 경로엔 비용이 안 붙는다.
+ *   [정정] 위 "그래프가 막힌 경우에만 호출" 은 2026-08-20 재수정 전 설명이다. 현재는 저속이 아니면
+ *   depth 확장 때마다 호출되므로 평상 매칭 경로에도 그리드 순회 비용이 붙고, 찾은 후보는
+ *   bGeometricBridge 로 표시돼 MM_GEOM_BRIDGE_PENALTY 를 받는다 (2026-10-06 최정우 주석 수정)
 */
 void CContinueMapMatch::BridgeNearbyLinkStarts(uint64 qwFromLinkID, double dfEndRawX, double dfEndRawY,
 		set<uint64> *psetSearchHistoryLinkList, listDepthLinkInfo *plistDepthLinkInfoList,
@@ -986,6 +1014,9 @@ void CContinueMapMatch::BridgeNearbyLinkStarts(uint64 qwFromLinkID, double dfEnd
  *   제외하고 경유 링크+최종 링크를 순서대로(시작→끝) 채운다 — 어느 경우든 최소 1개는 담긴다
  * @return void
  * @remark 최대 depth 가 config maxstep(작은 값, 보통 2~3)로 제한돼 있어 경로 길이도 그만큼 짧다 (2026-08-20 최정우 추가)
+ *   [정정] maxstep 은 2026-08-22 에 2→4 로 올랐고(현행 config.ini maxstep=4), 이동거리에 따라
+ *   MM_STEP_EXTEND_MAX(3)까지 더해져 최대 depth 7 까지 갈 수 있다. 경로가 MATCH_LINK_INFO_MAX_PATH(8)
+ *   를 넘으면 CMapMatch::ContinueMapMatch() 가 잘라 담는다 (2026-10-06 최정우 주석 수정)
 */
 void CContinueMapMatch::ReconstructPath(uint64 qwFinalLinkID, const unordered_map<uint64, uint64>& mapParentLink,
 		vector<uint64> *pvtOut)

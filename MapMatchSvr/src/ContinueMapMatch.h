@@ -129,6 +129,7 @@ private:
 	CGISUtil							m_cGISUtil;
 	CDataLoader							*m_pcDataLoader;
 	ALTITUDE_SCORE_CONFIG				m_stAltitudeConfig;					// config altitude_* — 연속 맵매칭 고도 보조 점수
+																			//   [정정] 키 이름은 2026-07-21 부터 alt_gap/alt_penalty/alt_weight/alt_slope (2026-10-06 최정우 주석 수정)
 };
 
 #endif //__CONTINUEMAPMATCH_H__

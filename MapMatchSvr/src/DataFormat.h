@@ -62,6 +62,7 @@ typedef struct sDataFileHead
 	uint32							dwGridSgmtInfoCount;				// 그리드별 세그먼트 정보 개수
 	uint32							dwLinkSgmtInfoCount;				// 링크별 세그먼트 정보 개수
 	uint32							dwLinkInfoCount;					// 링크별 세그먼트 정보 개수
+																		//   [정정] 링크 정보(LINK_INFO_DATA) 개수다 — 위 줄 문구 복사 오기 (2026-10-06 최정우 주석 수정)
 	uint32							dwTurnInfoCount;					// 시작 링크 기준으로 연결된 링크 회전 정보 개수
 	uint32							dwGridInfoStartOffset;				// 그리드별 세그먼트 범위 시작 Offset
 	uint32							dwGridInfoSize;						// 그리드별 세그먼트 범위 크기
@@ -155,6 +156,8 @@ typedef struct sLinkSgmtInfo
  * 	- nRoadRank : LINK_ROAD_RANK_* — MOCT_LINK.ROAD_RANK (101~108)
  *	- nConnect : 0:연결로 아님, 1:연결로 (MOCT_LINK.CONNECT). 101~108:구 링크 등급별 연결로
  * 	- nRoadType : 000:일반, 001:교량, 002:터널, 003:고가, 004:지하 (MOCT_LINK.ROAD_TYPE)
+ * 	  [정정] 공식 코드값은 0:일반, 1:고가, 2:지하, 3:교량, 4:터널 — DataDefine.h eLinkRoadType
+ * 	  (2026-08-27 정정분) 기준 (2026-10-06 최정우 주석 수정)
  *	- nStNodeType/nEdNodeType : NODE_TYPE_* — MOCT_NODE.NODE_TYPE (101~107)
 */
 typedef struct sLinkInfoData
@@ -196,6 +199,8 @@ typedef struct sLinkInfoData
  * 	- nRoadRank : LINK_ROAD_RANK_* — MOCT_LINK.ROAD_RANK (101~108)
  *	- nConnect : 0:연결로 아님, 1:연결로 (MOCT_LINK.CONNECT). 101~108:구 링크 등급별 연결로
  * 	- nRoadType : 000:일반, 001:교량, 002:터널, 003:고가, 004:지하 (MOCT_LINK.ROAD_TYPE)
+ * 	  [정정] 공식 코드값은 0:일반, 1:고가, 2:지하, 3:교량, 4:터널 — DataDefine.h eLinkRoadType
+ * 	  (2026-08-27 정정분) 기준 (2026-10-06 최정우 주석 수정)
  *	- nStNodeType/nEdNodeType : NODE_TYPE_* — MOCT_NODE.NODE_TYPE (101~107)
 */
 typedef struct sLinkInfo

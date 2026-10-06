@@ -1,6 +1,8 @@
 /**
  * @file ChargeDataLoader.h
  * @brief 과금 게이트 정보 로딩 클래스 헤더 파일
+ * @remark [보완] 게이트(base_tollgate) 외에 구역(base_roadlink — 링크 역인덱스·주정차 폴리곤·구역 선)과
+ *   주정차 과태료 최소시간(base_parking_fine)도 함께 적재한다 (2026-10-06 최정우 주석 추가)
 */
 #ifndef __CHARGEDATALOADER_H__
 #define __CHARGEDATALOADER_H__
@@ -83,6 +85,7 @@ typedef struct sZoneInfo
 	char							szRoadKind[2+1];						// 유형 0~5(일반/개방/폐쇄/구간단속/주정차/면제도로) (2026-08-13 최정우 수정 — 5 추가,
 																				//   2026-09-17 최정우 — 옛 이름 "비과금도로"를 현행 "면제도로"로 통일)
 	char							szRoadNm[100+1];						// 구역명 — 개방형 zone_name 으로 사용
+																				//   [보완] 현재는 전 유형 PRIM_CHARGEHAND.zone_name (2026-10-06 최정우 주석 추가)
 	char							szGeomType[4+1];						// LINE/POLY
 	double							dfSpeedLimitKmh;						// 제한속도(구간단속용, 해당없음=0)
 	char							szUseYN[1+1];
@@ -90,6 +93,9 @@ typedef struct sZoneInfo
 	string							strCoordsJson;							// coords 원본(jsonb 텍스트) — ParseCoordsJson() 입력. 결과는 vtCoords(POLY 만)
 	double							dfLengthM;								// coords 폴리라인 실거리(m) — [zone_select] SQL 에서
 																			//   하버사인 합산 계산됨. 폐쇄형·구간단속 dist_m 산출에 사용 (2026-08-12 최정우 추가)
+																			//   [보완] 2026-10-04 부터 폐쇄형·구간단속은 게이트 간 구역 선 길이(CalcZoneSpanM)가
+																			//   우선이고 이 값은 선이 없거나 게이트가 선에서 30m 넘게 떨어질 때의 대체값이다.
+																			//   개방형 정상 진입 run 의 dist_m(구역 전체길이)에도 쓴다 (2026-10-06 최정우 주석 추가)
 	double							dfFirstLon;								// coords 첫 정점 — 구간단속 from_lon (2026-08-12 최정우 추가)
 	double							dfFirstLat;								// coords 첫 정점 — 구간단속 from_lat
 	double							dfLastLon;								// coords 마지막 정점 — 구간단속 to_lon
@@ -138,7 +144,11 @@ typedef unordered_map<string, ZONE_INFO>	mapZoneInfo;
  * @remark
  *   - CDataLoader(link.psf 로딩)와 동일하게 "로드 1회 → 이후 인메모리 조회" 철학을 따름
  *   - link_id 우선 O(1) 조회, 실패 시 좌표거리(gate_radius) 폴백 — 게이트 판정(MatchGate)에서 사용
+ *     [정정] MatchGate 라는 함수는 없고 gate_radius 설정 키도 없다 — 좌표거리 폴백(GetGateNearby)은
+ *     현재 호출부가 없다. 게이트 판정은 RawLogWorker 가 GetGatesByLinkId/GetGateByRoadId 로 직접 한다
+ *     (2026-10-06 최정우 주석 수정)
  *   - LoadGates()/LoadZones()는 기동 시 1회 호출 + config.ini [charge] gate_reload(sec)>0 이면
+ *     (LoadParkingFine() 도 같은 주기로 재호출 — 2026-10-06 최정우 주석 추가)
  *     Server.cpp 타이머 스레드에서 주기 재호출(RawLogWorker 워커 스레드들과는 별도 스레드) — 매번
  *     새 맵을 만들어 std::swap 으로 교체, m_cGateCacheMutex/m_cZoneCacheMutex 로 스왑 구간과 조회
  *     함수(GetGateByLinkId 등) 양쪽을 짧게 잠가 보호(doc/README.txt §F 패턴) (2026-08-12 최정우 추가)
@@ -177,14 +187,18 @@ public:
 	//   오차만큼 바깥으로 확장 허용 — 서행/정차 중 GPS 튐으로 경계 근처에서 순간 이탈로 오판되는 것 방지)
 	//   (2026-08-13 최정우 추가, 2026-09-03 dfBufM 에서 개명)
 	PZONE_INFO GetParkingZoneContaining(const double dfLon, const double dfLat, const double dfPadM);
+	//   [보완] 현재 외부 호출부 없음 — 겹친 폴리곤을 전부 돌려주는 GetParkingZonesContaining() 으로 대체됨 (2026-10-06 최정우 주석 추가)
 	// 일반도로(ROAD_KIND=0, NODE_STEP) — 게이트가 없어 매칭 링크 ID로 직접 역인덱스 조회. 없으면 nullptr
 	//   (2026-08-14 최정우 추가)
 	PZONE_INFO GetNodeStepZoneByLinkId(const uint64 qwLinkID);
+	//   [보완] 현재 호출부 없음 — 1:N 판인 GetNodeStepZonesByLinkId() 로 대체됨 (2026-10-06 최정우 주석 추가)
 	// 한 링크가 여러 구역에 속할 수 있어 전부 돌려준다 (2026-08-23 최정우 추가)
 	void GetNodeStepZonesByLinkId(const uint64 qwLinkID, vector<PZONE_INFO> *pvtOut);
 	// 면제도로(ROAD_KIND=5) — 게이트가 없어 매칭 링크 ID로 직접 역인덱스 조회. 없으면 nullptr
 	//   (2026-08-13 최초 추가, charge_type=5로 썼다가 2026-08-14 폐기, 다시 2026-08-14 부활 —
 	//   출력 charge_type만 0으로 바뀌고 판정 방식은 원래의 zone 기반으로 복귀)
+	//   [정정] 현재 출력 charge_type 은 5(면제도로 고유값)다 — 0 으로 쓰던 것은 같은 날 재지시로 5 로 원복됨
+	//   (RawLogWorker.h vtExemptRuns 주석 참고) (2026-10-06 최정우 주석 수정)
 	PZONE_INFO GetExemptZoneByLinkId(const uint64 qwLinkID);
 	void GetExemptZonesByLinkId(const uint64 qwLinkID, vector<PZONE_INFO> *pvtOut);
 	// 개방형(ROAD_KIND=1) — 주행거리·주행시간 산출용 구역진입 판정에 사용(게이트는 여전히

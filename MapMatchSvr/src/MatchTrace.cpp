@@ -39,6 +39,10 @@ void AltValue(char *pszBuf, size_t nBufLen, sint16 nAlt)
  *   · dist = INTERSECT_LEN (GPS↔세그먼트 교차점 거리, m)
  *   · bHasAltAdj=true  → dist+angle_cost+alt_adj=cost
  *   · bHasAltAdj=false → dist+angle_cost=cost
+ *   [보완] 좌변 합이 cost 와 같지 않을 수 있다 — dfCost 에는 공식에 안 찍히는 가산분이 더 붙는다:
+ *   Continue 의 depth(hop) 벌점(config hoppenalty × depth)·좌표근접 브릿지 후보 MM_GEOM_BRIDGE_PENALTY,
+ *   Begin 연속실패 재검색의 미연결 후보 MM_CONNECT_PENALTY. 차이가 나면 이들 가산분이다
+ *   (2026-10-06 최정우 주석 수정)
 */
 void FormatCostFormula(char *pszBuf, size_t nBufLen, const MATCH_ENTRY& stEntry, bool bHasAltAdj)
 {

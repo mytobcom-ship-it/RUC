@@ -30,6 +30,9 @@ using namespace std;
 //   항상 정확하다(잠금은 OS가 fd 를 들고 있는 프로세스가 살아있는 동안만 유효, 프로세스가 죽으면
 //   fd 가 자동으로 닫히며 즉시 풀림 — PID 파일 존재 여부만으로 판단하는 것보다 훨씬 견고)
 //   (2026-09-04 최정우 추가, 사용자 지시)
+//   [정정] run_svr.sh·kill_svr.sh 는 2026-09-05 에 exe_path() 로 " (deleted)" 접미사를 떼고 비교하도록
+//   고쳐져, 위 "바이너리 교체 시 스크립트 감지 실패" 는 현재 스크립트에는 해당하지 않는다(이력으로 둔다).
+//   flock 은 스크립트 감지와 별개인 프로세스 자체의 이중 방어선으로 계속 유효하다 (2026-10-06 최정우 주석 수정)
 static const char *SINGLE_INSTANCE_PID_FILE = "./MapMatchSvr.pid";
 
 // 잠금 fd — 파일 스코프 static(함수 로컬 아님). AppMain.cpp(main) 과 Server.cpp(1초 타이머)
@@ -118,6 +121,10 @@ bool IsSingleInstanceLockIntact()
 	// 경로가 사라졌거나(삭제) 다른 파일로 바뀜 — 같은 경로에 즉시 새로 만들어 재점유한다.
 	//   원래 fd(s_nLockFd)의 잠금은 그대로 유효하므로 잃는 게 없다 — 이건 "다음 중복 기동
 	//   시도가 잠글 대상"을 다시 만들어주는 보강일 뿐
+	//   [정정] 실제 코드는 원래 fd 를 유지하지 않는다 — 새 경로 파일을 열면 원래 fd(s_nLockFd)를
+	//   close() 하고 새 fd 로 교체한다(옛 inode 의 잠금은 그때 풀린다). 또 새 fd 의 flock() 결과를
+	//   확인하지 않으므로, 틈 사이에 다른 인스턴스가 먼저 새 파일을 잠갔다면 이 프로세스는 잠금 없는
+	//   fd 를 들게 된다. open() 이 실패하면 원래 fd 를 그대로 둔다 (2026-10-06 최정우 주석 수정)
 	int nNewFd = open(SINGLE_INSTANCE_PID_FILE, O_CREAT | O_RDWR, 0644);
 	if (nNewFd >= 0)
 	{
@@ -266,6 +273,8 @@ bool Initialize(string config_file, PCONFIG pstConfig)
 
 	// [sql] (2026-07-11 최정우 주석 추가)
 	// [sql] rawlog_recover (2026-07-11 최정우 주석 추가)
+	//   필수 — 비어 있으면 여기서, 세션은 있으나 query.sql 에 SQL 이 없으면 CServer::Initialize() 에서
+	//   기동 실패한다. config.ini 주석의 "(선택, 비우면 비활성)" 표기는 이 동작과 다르다 (2026-10-06 최정우 주석 추가)
 	cIniReader.GetProfileStr("sql", "rawlog_recover", "", pstConfig->strRawLogRecoverSession);
 	if (pstConfig->strRawLogRecoverSession.empty())
 	{
@@ -318,6 +327,8 @@ bool Initialize(string config_file, PCONFIG pstConfig)
 	if (pstConfig->nGateReloadSec < 0)
 		pstConfig->nGateReloadSec = CFG_DEF_GATE_RELOAD;
 	// [server] stale_sec (단위: sec, 0=비활성) (2026-08-29 최정우 추가)
+	//   음수만 기본값으로 되돌린다. ttl_sec 미만이면 CServer::Initialize() 가 ttl_sec 으로 올린다
+	//   (세션 보류 행 이중 처리 방지) (2026-10-06 최정우 주석 추가)
 	cIniReader.GetProfileInt("server", "stale_sec", CFG_DEF_STALE_SEC, pstConfig->nStaleSec);
 	if (pstConfig->nStaleSec < 0)
 		pstConfig->nStaleSec = CFG_DEF_STALE_SEC;
@@ -627,7 +638,8 @@ static void LogStartupConfig(const CONFIG& stConfig)
 
 /**
  * @brief main 함수
- * @return -1, 0
+ * @return 0(정상 종료). 중복 기동·초기화·로거 기동 실패 등은 return 하지 않고 exit(1) 로 끝낸다
+ *   (2026-10-06 최정우 주석 수정 — 종전 "-1, 0" 은 -1 을 돌려주는 경로가 없어 사실과 달랐다)
 */
 int main()
 {
@@ -719,6 +731,10 @@ int main()
 			LOGFMTE("error=[%s]", e.what());
 		}
 	}
+	// IllegalThreadStateException 은 std::exception 파생이라 위 안쪽 catch(exception&) 가 먼저 잡는다 —
+	//   이 바깥 catch 로 들어오는 경로는 현재 없다. std::exception 비파생 예외는 어느 쪽도 잡지 않는다.
+	//   예외 경로에서 Uninitialize() 가 두 번 불리지만 m_bUninitialized 가드로 두 번째는 즉시 반환한다
+	//   (2026-10-06 최정우 주석 추가)
 	catch (IllegalThreadStateException& e)
 	{
 		pcServer->Uninitialize();

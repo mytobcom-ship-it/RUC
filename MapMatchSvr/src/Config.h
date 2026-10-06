@@ -18,6 +18,7 @@ typedef struct sConfig
 	string							strLogPath;							// 로그 경로
 	int								nLogLevel;							// 로그 레벨
 	int								nLogKeepRunTime;					// 로그 삭제 시간 설정
+																		//   [보완] [log] runtime — 로그 정리 시각(시, 0~23). 음수면 미사용(UNUSE_LOG_KEEP) (2026-10-06 최정우 주석 추가)
 	int								nLogKeepDay;						// 로그 보관일
 
 	// DB 접속 정보
@@ -36,13 +37,16 @@ typedef struct sConfig
 
 	// SQL 문 (쿼리.sql 세션 키)
 	string							strRawLogRecoverSession;			// GPS 좀비 PROCESSING 복구 SQL
+																		//   [보완] [sql] rawlog_recover — 기동 시 1회만 실행. 운영 중 주기 회수는 strStaleRecoverSession (2026-10-06 최정우 주석 추가)
 	string							strRawLogSelectSession;				// GPS 로그 조회·예약 SQL
 	string							strRawLogUpdateSession;				// GPS 로그 갱신 SQL
 	string							strChargeInsertSession;				// 과금 INSERT SQL (개방형 게이트 통과, 비어 있으면 비활성)
+																		//   [정정] 개방형 전용이 아니라 6개 CHARGE_TYPE 공용 [charge_insert] (2026-10-06 최정우 주석 수정)
 	string							strGateSelectSession;				// 과금 게이트(BASE_TOLLGATE) 전량 조회 SQL, 비어 있으면 CChargeDataLoader 게이트 캐시 비활성 (2026-08-12 최정우 추가)
 	string							strZoneSelectSession;				// 과금 구역(BASE_ROADLINK) 전량 조회 SQL, 비어 있으면 CChargeDataLoader 구역 캐시 비활성 (2026-08-12 최정우 추가)
 	string							strParkFineSelectSession;			// 주정차 과태료(BASE_PARKING_FINE) 최소 FROM_MIN 조회 SQL, 비어 있으면 체류시간 임계 비활성 (2026-08-24 최정우 추가)
 	string							strTripEndUpdateSession;			// 트립 종료 시 trip_end_dt UPDATE SQL, 비어 있으면 비활성 (2026-08-12 최정우 추가)
+																		//   [보완] 2026-10-04 부터 TTL·트립 전환·서버 종료 마감도 같은 SQL 을 쓴다([trip_abend] 삭제) (2026-10-06 최정우 주석 추가)
 	string							strTripSeqMaxSession;				// [sql] trip_seqmax — 트립의 기존 최대 TRIP_SEQ 조회(읽기 전용), 비어 있으면 이어 매기기 비활성 (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
 	string							strServerStatusSession;				// 서버 상태(CPU/메모리) 하트비트 UPDATE SQL, 비어 있으면 비활성 (2026-08-20 최정우 추가)
 	string							strStaleRecoverSession;				// 좀비 PROCESSING 운영 중 회수 SQL, 비어 있으면 비활성 (2026-08-29 최정우 추가)
@@ -57,6 +61,7 @@ typedef struct sConfig
 
 	// 워커 (세션·종료)
 	int								nTtlSec;							// trip_id 세션 유지 시간 (초)
+																		//   [정정] 세션 키는 DEVICE_KEY — 마지막 처리 벽시계(dtLastSeen) 기준 경과 판정, 0=비활성 (2026-10-06 최정우 주석 수정)
 	int								nShutdownWait;						// 종료 시 진행 중(활성) batch 완료 대기 (ms)
 	int								nRetryMax;							// release 재시도 상한 (0=무제한)
 
@@ -72,11 +77,15 @@ typedef struct sConfig
 	int								nRadiusMin;							// radius_min
 	int								nRadiusMax;							// radius_max
 	int								nRadiusSkip;						// radius_skip
+																		//   ACCURACY_M 이 이 값(m)을 넘는 좌표는 SKIP, 0=비활성 (2026-10-06 최정우 주석 추가)
 	int								nMaxStep;							// maxstep
+																		//   연속 맵매칭 링크 탐색 기본 depth(hop), 필수 >0 — 기본값 상수 없음 (2026-10-06 최정우 주석 추가)
 	double							dfHopLenRatio;						// [mapmatch] hoppenalty_lenratio — hop 벌점 링크길이 비례 상한, 0=비활성 (2026-08-23 최정우 추가)
 	double							dfHopPenalty;						// [mapmatch] hoppenalty — depth 1단계당 가산 비용(m), 0=비활성 (2026-08-22 최정우 추가)
 	int								nDistance;							// distance
+																		//   heading 유효거리(m) — 이동거리가 이 값을 넘으면 heading 미사용 (2026-10-06 최정우 주석 추가)
 	int								nMatchTimeout;						// timeout
+																		//   GPS 1건 맵매칭 처리 임계(ms), 초과 시 ERROR 격리, 0=비활성 (2026-10-06 최정우 주석 추가)
 
 	int								nAltGap;							// alt_gap
 	int								nAltPenalty;						// alt_penalty (양수=페널티·음수=보너스)
@@ -109,6 +118,7 @@ typedef struct sConfig
 	int								nZoneExitCnt;						// [charge] zone_exitcnt — 게이트형 다중링크 구역 이탈 확정 연속 GPS 건수(디바운스), 0=비활성 (2026-09-21 최정우 추가)
 	int								nNodeExitCnt;						// [charge] node_exitcnt — 일반도로(NODE_STEP) 이탈 확정 연속 GPS 건수(디바운스) (2026-08-24 최정우 추가)
 	int								nParkSpeedMax;						// [charge] park_speedmax (단위: km/h) — 이 속도 이하에서만 주정차로 판정 (2026-08-22 최정우 추가)
+																		//   0=비활성(기본·운영값) — 속도를 보지 않고 위치·체류만으로 판정 (2026-10-06 최정우 주석 추가)
 	int								nParkEntryCnt;						// [charge] park_entrycnt — 세션 개시에 필요한 연속 충족 GPS 건수 (2026-08-22 최정우 추가)
 	int								nParkTtlSec;						// [charge] park_ttl (단위: sec) — 마지막 신뢰(RAW_VLD=true) 확인 후 강제 마감까지의 시간 (2026-08-19 최정우 추가)
 	int								nExemptRegraceSec;					// [charge] exempt_regrace (단위: sec) — 재진입 유예시간 (2026-08-14 최정우 추가)

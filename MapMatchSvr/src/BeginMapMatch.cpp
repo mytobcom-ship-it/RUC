@@ -21,6 +21,11 @@ CBeginMapMatch::~CBeginMapMatch()
 
 /**
  * @brief 링크 진행 방위각 (시작 노드 → 종료 노드)
+ * @param[in] pstLinkInfo 링크 정보 (노드 좌표는 도×360000 스케일 정수)
+ * @return 방위각(도, 0=북 시계방향, 0~359)
+ * @remark 두 노드를 잇는 **직선** 방향이다 — 곡선·U자형 링크는 중간 형상과 크게 다를 수 있다.
+ *         FixOppositePairByHeading·FixReverseLinkByAzimuth·IsAntiHeadingOpposite 의 판정 기준
+ *         (2026-10-06 최정우 주석 추가)
 */
 sint16 CBeginMapMatch::GetLinkAzimuth(PLINK_INFO pstLinkInfo)
 {
@@ -276,6 +281,8 @@ bool CBeginMapMatch::StartMapMatch(CDataLoader *pcDataLoader, SGMT_MATCH_INPUT& 
 	//   다시 채워** 넘길 것. 현재 호출부는 전부 이 규칙을 지키고 있어 무해하다.
 	//   참조 대신 값 전달로 바꾸는 근본 수정은 하위 호출 전부가 "이미 스케일된 상태"를 전제로
 	//   짜여 있어 핵심 매칭 함수 전체 재설계가 필요 — 보류 중인 별도 과제다.
+	//   [정정] 위 "MapMatch.cpp:271" 은 작성 당시 줄 번호라 지금은 어긋난다 — CMapMatch::ContinueMapMatch()
+	//   안의 Begin 병행폴백 블록(stBeginSgmtMatchInput 선언부)을 가리킨다 (2026-10-06 최정우 주석 수정)
 	stSgmtMatchInput.stPoint.dfX *= 360000.0;
 	stSgmtMatchInput.stPoint.dfY *= 360000.0;
 
@@ -454,6 +461,9 @@ bool CBeginMapMatch::GridSgmtMapMatch(SGMT_MATCH_INPUT& stSgmtMatchInput, uint32
 	else														// 매칭된 결과가 있으면
 	{
 		// 매칭 거리순 정렬
+		// [정정] 거리순이 아니라 MATCH_ENTRY::operator< 기준 **dfCost 오름차순**(동률 시 INTERSECT_LEN)이다.
+		//   Begin 은 heading 을 안 써 각도비용이 0 이지만, 연속실패 재검색이면 위 MM_CONNECT_PENALTY 가
+		//   dfCost 에 더해져 있어 거리순과 달라질 수 있다 (2026-10-06 최정우 주석 수정)
 		listMatchEntryList.sort();
 
 		*pwErrorCode = NO_ERROR;
@@ -619,6 +629,8 @@ bool CBeginMapMatch::FindGeomNearest(CDataLoader *pcDataLoader, SGMT_MATCH_INPUT
 	//   다시 채워** 넘길 것. 현재 호출부는 전부 이 규칙을 지키고 있어 무해하다.
 	//   참조 대신 값 전달로 바꾸는 근본 수정은 하위 호출 전부가 "이미 스케일된 상태"를 전제로
 	//   짜여 있어 핵심 매칭 함수 전체 재설계가 필요 — 보류 중인 별도 과제다.
+	//   [정정] 위 "MapMatch.cpp:271" 은 작성 당시 줄 번호라 지금은 어긋난다 — CMapMatch::ContinueMapMatch()
+	//   안의 Begin 병행폴백 블록(stBeginSgmtMatchInput 선언부)을 가리킨다 (2026-10-06 최정우 주석 수정)
 	stSgmtMatchInput.stPoint.dfX *= 360000.0;
 	stSgmtMatchInput.stPoint.dfY *= 360000.0;
 

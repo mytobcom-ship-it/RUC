@@ -69,6 +69,10 @@ void CDataLoader::Uninitialize()
 /**
  * @brief 데이터 업데이트
  * @return true(성공), false(실패)
+ * @remark link.psf(m_strDataFile) 를 읽어 GRID·세그먼트·링크·회전정보를 메모리에 전량 적재한다.
+ *   현재 호출부는 CServer::Initialize() 기동 1회뿐이며 적재 후에는 읽기 전용이라 조회 함수에 락이 없다.
+ *   헤더 크기 검증 실패는 기존 데이터를 보존하지만, SetDataInit() 이후 실패는 기존 데이터까지 비운다
+ *   (2026-10-06 최정우 주석 추가)
 */
 bool CDataLoader::SetDataUpdate()
 {

@@ -47,6 +47,8 @@ CPostgrePool::~CPostgrePool()
  * @param[in] nMinConnect 최소 접속 수
  * @param[in] nMaxConnect 최대 접속 수
  * @param[in] nTimeOut 데이터베이스 연결 검사 (초)
+ *            keepPoolAlive() 의 검사 주기이기도 하다(0 이하면 60). CServer 는 이 인자를 넘기지 않아
+ *            헤더 기본값(60초)을 쓴다 (2026-10-06 최정우 주석 추가)
  * @return true(성공), false(실패)
 */
 bool CPostgrePool::InitializePool(string strUserID, string strPassword, string strDataBase, 
@@ -210,6 +212,10 @@ void CPostgrePool::freeConnection(PGconn *pcHandle)
 /**
  * @brief DB 연결 세션 얻기
  * @return DB 연결 핸들 값
+ *   nullptr = 풀 무효·종료 중이거나 새 연결 생성 실패 (2026-10-06 최정우 주석 추가)
+ * @remark 유휴 연결이 없고 보유수가 maxconnect 에 도달하면 releaseConnection()·종료 통지가 올 때까지
+ *   **타임아웃 없이 블록**한다. 새 연결 생성(PQsetdbLogin)도 풀 뮤텍스를 쥔 채 수행된다
+ *   (2026-10-06 최정우 주석 추가)
 */
 PGconn *CPostgrePool::getConnection()
 {

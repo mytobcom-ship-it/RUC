@@ -42,6 +42,11 @@ static void ServerSignalHandler(int nSignal)
  * @brief 로그 관리 검사 쓰레드
  * @param[in] context 호출 클래스 포인터
  * @return nullptr
+ * @remark 로그 관리만 하는 스레드가 아니다 — 1초마다 CServer::ProcessPeriodSec() 을 불러 PID 파일
+ *   잠금 무결성 확인·만료 로그 삭제·게이트/구역/주정차 과태료 캐시 주기 재조회(gate_reload)·
+ *   좀비 PROCESSING 운영 중 회수(stale_sec)·CPU 샘플·서버 상태 하트비트(status_interval)를 처리한다.
+ *   m_bRun 이 false 가 되면 종료하며, CServer::Uninitialize() 가 pthread_join 으로 회수한다
+ *   (2026-10-06 최정우 주석 추가)
 */
 extern "C" void *TimerThread(void *context)
 {
@@ -59,6 +64,8 @@ extern "C" void *TimerThread(void *context)
 		if (dtPre != dtNow)
 		{
 			// 매 초마다 로그 관리 시간 검사 및 처리
+			//   [정정] 로그 관리뿐 아니라 캐시 재조회·stale 회수·하트비트 등 주기 작업 전체(위 @remark)
+			//   (2026-10-06 최정우 주석 수정)
 			pcServer->ProcessPeriodSec(dtNow);
 		}
 
@@ -78,11 +85,25 @@ class CWorkerManager : public virtual Runnable
 public:
 	CWorkerManager() : m_pcRawLogWorker(nullptr) {}
 
+	/**
+	 * @brief 위임 대상 RawLogWorker 연결 — 소유권은 넘기지 않는다(해제는 CServer::Uninitialize())
+	 * @param[in] pcRawLogWorker 워커 스레드 전체가 공유하는 CRawLogWorker 인스턴스
+	 * @return void
+	 * @remark 이 래퍼 자체는 CThreadPool 이 소유해 ~CThreadPool() 에서 delete 한다 (2026-10-06 최정우 주석 추가)
+	*/
 	void SetWorker(CRawLogWorker *pcRawLogWorker)
 	{
 		m_pcRawLogWorker = pcRawLogWorker;
 	}
 
+	/**
+	 * @brief 워커 1 배치 처리 — CThreadPoolWorker::run() 이 Dequeue 한 batch 를 넘겨 호출한다
+	 * @param[in] nThreadId 워커(큐) 인덱스 — RawLogWorker 의 세션 슬롯 번호와 같다
+	 * @param[in] context RAW_LOG_BATCH * (Dequeue 된 원시 GPS batch)
+	 * @return void
+	 * @remark 같은 워커 스레드에서만 그 슬롯의 세션을 만진다는 소유권 규칙으로 락 없이 운영된다
+	 *   (2026-10-06 최정우 주석 추가)
+	*/
 	virtual void run(int nThreadId, void *context)
 	{
 		if (m_pcRawLogWorker != nullptr)
@@ -190,6 +211,12 @@ CServer::~CServer()
  * @brief 서버 초기화
  * @param[in] stConfig 환경 설정
  * @return true(성공), false(실패)
+ * @remark 기동 순서(2026-10-06 최정우 주석 추가): SQL 로드 → DB 풀 → link.psf 적재 → 과금 캐시(게이트·
+ *   구역·주정차 과태료) 1회 로드 → ProcessManager·RawLogWorker·ThreadPool(워커 기동) → Fetcher 초기화
+ *   → m_bRun=true → 타이머 스레드 → 시그널 핸들러 → rawgps_recover(최대 RECOVER_RETRY_MAX 회, 실패 시
+ *   기동 중단) → Fetcher start(). 복구가 Fetcher 기동보다 먼저라 기동 직후 조회는 복구된 행을 포함한다.
+ *   false 반환 경로는 모두 Uninitialize() 로 부분 초기화를 되돌린다. Fetcher start() 실패는 예외
+ *   (IllegalThreadStateException)로 빠져 main 의 catch 가 Uninitialize() 를 부른다
 */
 bool CServer::Initialize(const CONFIG& stConfig)
 {
@@ -256,6 +283,9 @@ bool CServer::Initialize(const CONFIG& stConfig)
 	//   되돌리면 그 행이 새 행처럼 재조회되면서 보류 버퍼와 겹쳐 같은 GPS 를 두 번 처리한다
 	//   (RawLogWorker 의 orphan release 가 세션 보류 행을 제외하는 이유와 동일).
 	//   세션이 TTL 로 소멸한 뒤에 회수해야 안전하므로 미만이면 ttl_sec 으로 올린다 (2026-08-29 최정우 추가)
+	//   [보완] 같은 값(stale_sec == ttl_sec, 현행 config 3600/3600)이면 여유가 0 이다 — TTL 마감은
+	//   배치 처리 끝·워커 유휴 tick(60초)에만 돌아 경과 직후 즉시 마감된다는 보장이 없다.
+	//   ttl_sec=0(TTL 비활성)이면 이 상향 자체가 걸리지 않는다 (2026-10-06 최정우 주석 추가)
 	if ((m_nStaleSec > 0) && (m_nStaleSec < m_nTtlSec))
 	{
 		LOGFMTW("stale_sec[%d] < ttl_sec[%d] — 세션 보류 행 이중 처리 방지를 위해 ttl_sec 으로 올림",
@@ -305,6 +335,7 @@ bool CServer::Initialize(const CONFIG& stConfig)
 	}
 
 	// PROCESSING 복구 SQL (기동 시 1회)
+	//   필수 — SQL 이 비면 기동 실패(config.ini 주석의 "선택" 표기와 다름) (2026-10-06 최정우 주석 추가)
 	// 세션명으로 PROCESSING→PENDING 복구 SQL 조회 (2026-07-08 최정우 주석 추가)
 	m_strRawLogRecoverSQL = m_pcSQLAccessor->GetSQL(stConfig.strRawLogRecoverSession);
 	if (m_strRawLogRecoverSQL.empty())
@@ -490,6 +521,9 @@ bool CServer::Initialize(const CONFIG& stConfig)
 	m_pcDataLoader->SetDataInfoDisplay();
 
 	// 과금 게이트 데이터 클래스 — gate_select SQL 미설정 시 비활성(치명적 실패 아님) (2026-08-12 최정우 추가)
+	//   [보완] gate_select 가 비면 CChargeDataLoader 자체를 만들지 않는다 — zone_select·parkfine_select
+	//   가 설정돼 있어도 함께 꺼지고, RawLogWorker 는 pcChargeDataLoader==nullptr 이라 6개 과금유형
+	//   판정·적재를 전부 건너뛴다(맵매칭 결과 갱신만 수행) (2026-10-06 최정우 주석 추가)
 	if (!m_strGateSelectSQL.empty())
 	{
 		m_pcChargeDataLoader = new (std::nothrow)CChargeDataLoader;
@@ -515,6 +549,9 @@ bool CServer::Initialize(const CONFIG& stConfig)
 			LOGFMTI("gate cache initial load success!count=[%zu]", m_pcChargeDataLoader->GetGateCount());
 
 		// 기동 시 1회 구역 캐시 로드 — 실패해도 서버 기동은 계속(zone_name 조회만 비활성) (2026-08-12 최정우 추가)
+		//   [정정] 지금은 zone_name 만이 아니다 — 구역 캐시·link_id 역인덱스가 비어 일반도로·개방형 구간·
+		//   면제·주정차(폴리곤)·폐쇄형/구간단속 거리 산출과 구역 중간진입 판정이 다음 재조회 성공까지
+		//   모두 동작하지 않는다 (2026-10-06 최정우 주석 수정)
 		if (!m_pcChargeDataLoader->LoadZones())
 			LOGFMTW("initial zone cache load failed — zone name lookup disabled until next reload");
 		else
@@ -572,6 +609,7 @@ bool CServer::Initialize(const CONFIG& stConfig)
 	stWorkerConfig.pcPostgrePool = m_pcPostgrePool;
 	stWorkerConfig.pcProcessManager = m_pcProcessManager;
 	stWorkerConfig.pcChargeDataLoader = m_pcChargeDataLoader;			// nullptr 이면 개방형 과금 판정 비활성 (2026-08-12 최정우 추가)
+	//   [정정] nullptr 이면 개방형만이 아니라 6개 과금유형 전부가 비활성이다 (2026-10-06 최정우 주석 수정)
 	stWorkerConfig.pcDataLoader = m_pcDataLoader;						// LINK_INFO.qwOppositeLinkID 조회용 (2026-08-21 최정우 추가)
 	stWorkerConfig.strUpdateSQL = m_strRawLogUpdateSQL;
 	stWorkerConfig.strChargeInsertSQL = m_strChargeInsertSQL;
@@ -712,6 +750,13 @@ bool CServer::Initialize(const CONFIG& stConfig)
 /**
  * @brief 메모리 반환
  * @return void
+ * @remark 종료 순서(2026-10-06 최정우 주석 추가) — 순서 자체가 안전 조건이다:
+ *   ① RequestShutdown()(m_bRun=false) → ② Fetcher WakeUp()+join() → ③ ThreadPool RequestShutdown()
+ *   → ④ WaitForActiveIdle(shutdown_wait, 0 이면 생략) → ⑤ DrainPendingBatchesAndRelease()(큐 잔여
+ *   PROCESSING→PENDING) → ⑥ WaitForAllStopped(3000) → ⑦ 전부 멈췄을 때만 FlushAllSessionsOnShutdown()
+ *   → ⑧ ThreadPool delete → ⑨ RawLogWorker delete → ⑩ 타이머 스레드 join → ⑪ DataLoader·
+ *   ChargeDataLoader·PostgrePool·LoggerManager·ProcessManager 해제. ⑥ 이 false 면 ⑦ 을 건너뛰고
+ *   워커가 참조하는 객체 delete 를 생략한다(m_bSkipDependentTeardown). 중복 호출은 m_bUninitialized 로 무시
 */
 void CServer::Uninitialize()
 {
@@ -873,6 +918,8 @@ void CServer::Uninitialize()
 	LOGFMTI("db connection pool uninitialize!");
 
 	// logger manager thread stop
+	//   [정정] CLoggerManager 는 자체 스레드가 없다(타이머 스레드가 LogDeleteRun() 을 호출) — 여기서는
+	//   객체 해제만 한다. 타이머 스레드 join 이 위에서 끝났으므로 안전하다 (2026-10-06 최정우 주석 수정)
 	if (m_pcLoggerManager) delete m_pcLoggerManager;
 	m_pcLoggerManager = nullptr;
 
@@ -908,6 +955,8 @@ void CServer::RequestShutdown()
 /**
  * @brief 종료 시 워커 큐 잔여 batch 예약 해제 (#8)
  * @return true(release 시도 완료), false(pool/worker/conn 없음)
+ *   [정정] true 는 잔여 batch 가 없거나 전 batch release 성공일 때만이다 — 한 batch 라도 release 에
+ *   실패하면 false(그 행들은 PROCESSING 으로 남아 다음 기동의 rawgps_recover 가 회수) (2026-10-06 최정우 주석 수정)
 */
 bool CServer::DrainPendingBatchesAndRelease()
 {

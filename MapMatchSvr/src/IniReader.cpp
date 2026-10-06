@@ -182,6 +182,8 @@ bool CIniReader::ReadIniFile()
 				//   config 를 읽고, ILog4zManager::start() 는 638 행). 그래서 LOGFMTW 만으로는
 				//   아무 데도 안 남는다. run_svr.sh 가 stderr 를 MapMatchSvr_launcher.log 로
 				//   리다이렉트하므로 거기서 확인할 수 있다 (2026-09-15 최정우 추가)
+				//   [정정] 위 행 번호는 바뀌었다 — main() → Initialize() 의 cIniReader.Open() 과, 그 뒤
+				//   main() 의 ILog4zManager::getRef().start() 를 가리킨다 (2026-10-06 최정우 주석 수정)
 				fprintf(stderr, "[WARN] ini duplicated section! section=[%s] path=[%s]"
 					" - 기존 섹션에 이어서 읽습니다\n", strToken.c_str(), m_strFullName.c_str());
 				LOGFMTW("ini duplicated section!section=[%s] path=[%s] — 기존 섹션에 이어서 읽는다",
@@ -552,6 +554,8 @@ bool CIniReader::GetProfileDouble(const string strSection, const string strKey, 
  * \t  · nCount 는 **입출력 겸용**이다. 호출 전에 반드시 배열 크기를 넣어야 하며, 0 을 넣으면
  * \t    아무것도 채우지 않고 true 를 돌려준다(위 @param 설명이 out 전용으로만 적혀 있어
  * \t    오해를 부르던 것을 이번에 in,out 으로 정정했다).
+ * \t    [정정] 0(또는 음수)을 넣으면 true 가 아니라 **false** 를 돌려주고 nCount=0 으로 만든다 —
+ * \t    같은 날 추가된 아래 인자 가드 때문이다 (2026-10-06 최정우 주석 수정)
  * \t  · pstrValue 는 호출측이 할당한 배열이어야 한다 — 아래 nullptr 가드 참조.
  */
 bool CIniReader::GetProfileArrayStr(const string strSection, const string strKey, string *pstrValue, int& nCount)

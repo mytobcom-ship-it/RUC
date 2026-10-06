@@ -320,6 +320,8 @@ bool CRawLogFetcher::FetchAndDispatch()
  *   - $1=LIMIT
  *   - ParseRow 실패 시 해당 행만 건너뛰고 나머지 디스패치 (#4 orphan 방지)
  *   - 실패 행은 [rawgps_update] $4=0 으로 PROCESSING→PENDING 즉시 release
+ *     [정정] MATCH_STATUS 는 $7 이다($4 는 MATCH_LON) — ReleaseReservedRows() 가 $7="0" 으로 보낸다
+ *     (2026-10-06 최정우 주석 수정)
 */
 bool CRawLogFetcher::ReserveFetchBatch(PGconn *pcConn, vector<sRawLogInfo> *pvtRawLogInfos)
 {
@@ -419,6 +421,8 @@ bool CRawLogFetcher::ReserveFetchBatch(PGconn *pcConn, vector<sRawLogInfo> *pvtR
 /**
  * @brief 연속 동일 trip_id 구간을 RAW_LOG_BATCH 로 묶음
  * @param[in] vtRawLogInfos SQL 정렬 순 RAW_LOG_INFO 목록
+ *            [정정] SQL 순서가 아니라 FetchAndDispatch() 의 stable_sort(device_key·trip_id·gps_seq)
+ *            결과 순이다 — RETURNING 출력 순서는 보장되지 않는다 (2026-10-06 최정우 주석 수정)
  * @param[out] pvtBatches trip_id 별 batch 목록
  * @return void
  * @remark 입력은 device_key, trip_id, **gps_seq** 순 정렬 가정 — 인접한 같은 trip_id 구간만 묶으므로
@@ -762,6 +766,9 @@ bool CRawLogFetcher::ParseRow(PGresult *pcResult, int nRow, sRawLogInfo *pstRawL
 	const char *pszSeq = PQgetvalue(pcResult, nRow, RGC_GPS_SEQ);
 	const char *pszDeviceKey = PQgetvalue(pcResult, nRow, RGC_DEVICE_KEY);
 	const char *pszGpsDt = PQgetvalue(pcResult, nRow, RGC_GPS_DT);
+	// NULL 기본값 — TRIP_EVENT NULL → "1"(NONE, 시작·종료 아님), DRIVE_STATUS NULL → "0"(ON_ROAD),
+	//   GPS_LAT/LON NULL → bGpsLat/LonNull 표시(좌표 0 유지), RECV_DT NULL → ""(dtRecv=0).
+	//   RAW_VLD NULL 은 아래에서 false(신뢰 불가)로 본다 (2026-10-06 최정우 주석 추가)
 	const char *pszTripEvent = PQgetisnull(pcResult, nRow, RGC_TRIP_EVENT)
 		? "1" : PQgetvalue(pcResult, nRow, RGC_TRIP_EVENT);
 	const char *pszDriveStatus = PQgetisnull(pcResult, nRow, RGC_DRIVE_STATUS)

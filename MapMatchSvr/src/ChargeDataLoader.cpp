@@ -1,6 +1,9 @@
 /**
  * @file ChargeDataLoader.cpp
  * @brief 과금 게이트 정보 로딩 클래스 소스 파일
+ * @remark 게이트(base_tollgate)만이 아니라 과금 구역(base_roadlink)·유형별 link_id 역인덱스·주정차
+ *   과태료 최소 기준(base_parking_fine)까지 캐시한다. 재조회는 CServer 타이머의 gate_reload 주기
+ *   (2026-10-06 최정우 주석 추가)
 */
 #include "ChargeDataLoader.h"
 #include "CoordConvert.h"
@@ -173,7 +176,9 @@ CChargeDataLoader::~CChargeDataLoader()
  * @param[in] strGateSelectSQL base_tollgate 전량 조회 SQL(query.sql 세션명으로 로드된 실 SQL 문자열)
  * @param[in] strZoneSelectSQL base_roadlink 전량 조회 SQL(비어 있으면 구역 캐시만 비활성 — 게이트
  *            캐시는 그대로 사용 가능) (2026-08-12 최정우 추가)
- * @return true(성공), false(실패)
+ * @param[in] strParkFineSelectSQL base_parking_fine 최소 FROM_MIN 조회 SQL(비어 있으면 주정차 체류시간
+ *            임계 비활성) (2026-10-06 최정우 주석 추가)
+ * @return true(성공), false(실패 — 풀 nullptr 또는 게이트 SQL 비어 있음) (2026-10-06 최정우 주석 수정)
 */
 bool CChargeDataLoader::Initialize(CPostgrePool *pcPostgrePool, const string& strGateSelectSQL,
 	const string& strZoneSelectSQL, const string& strParkFineSelectSQL)
@@ -462,6 +467,9 @@ size_t CChargeDataLoader::GetGateCount() const
  * @param[in] dfLon 현재 위치 경도(WGS84)
  * @param[in] dfGateRadiusM 유효 반경(m) — config.ini [charge] gate_radius(아직 미배치, TODO)
  * @return 반경 내 가장 가까운 게이트 정보 포인터(없으면 nullptr)
+ * @remark 현재 호출부 없음 — 게이트 판정은 link_id(GetGateByLinkId 계열)·road_id 조회만 쓴다.
+ *   또 link_id 가 NULL 인 게이트는 LoadGates() 가 캐시에서 빼므로 이 폴백이 쓰여도 그 게이트는
+ *   찾지 못한다 (2026-10-06 최정우 주석 추가)
 */
 PGATE_INFO CChargeDataLoader::GetGateNearby(const double dfLat, const double dfLon, const double dfGateRadiusM)
 {
@@ -503,6 +511,8 @@ PGATE_INFO CChargeDataLoader::GetGateNearby(const double dfLat, const double dfL
  * @brief base_roadlink 전량을 조회해 인메모리 캐시로 (재)로드 — 기동 시 1회, 또는 주기
  *        재조회 스레드에서 반복 호출 (2026-08-12 최정우 추가)
  * @return true(성공), false(실패)
+ *   zone_select SQL 이 비어 있으면 조회 없이 true(구역 캐시 비활성)를 돌려준다. 실패 시 기존
+ *   캐시는 그대로 유지된다 (2026-10-06 최정우 주석 추가)
 */
 bool CChargeDataLoader::LoadZones()
 {
@@ -621,6 +631,9 @@ bool CChargeDataLoader::LoadZones()
 		//   안에 있는가"만 확인하면 되고(진행 중인 road_id 를 이미 알고 있음), 링크→구역 전체
 		//   매핑이 필요한 NODE_STEP/EXEMPT/OPEN과 달리 GetZoneByRoadId() 로 얻은 그 zone 하나의
 		//   vtLinkIds 만 선형 탐색하면 충분함(구역당 링크 수가 적어 성능 문제 없음).
+		//   [정정] "역인덱스는 안 만듦" 은 이후 바뀌었다 — 구간단속(3)은 2026-09-01(m_mapSpeedLinkToRoadId),
+		//   폐쇄식(2)은 2026-09-23(m_mapClosedZoneLinkToRoadId)부터 아래에서 역인덱스를 만든다
+		//   (2026-10-06 최정우 주석 수정)
 		if ((strcmp(stZoneInfo.szRoadKind, "0") == 0) || (strcmp(stZoneInfo.szRoadKind, "1") == 0)
 			|| (strcmp(stZoneInfo.szRoadKind, "2") == 0) || (strcmp(stZoneInfo.szRoadKind, "3") == 0)
 			|| (strcmp(stZoneInfo.szRoadKind, "5") == 0))
@@ -815,7 +828,12 @@ PZONE_INFO CChargeDataLoader::GetParkingZoneContaining(const double dfLon, const
 /**
  * @brief 주정차 구역 복수 조회 — 폴리곤이 겹쳐 설정될 수 있다(시간대별 규제가 다른 구역 등)
  *   (2026-08-23 최정우 추가)
+ * @param[in] dfLon 판정 경도 (2026-10-06 최정우 주석 추가)
+ * @param[in] dfLat 판정 위도 (2026-10-06 최정우 주석 추가)
+ * @param[in] dfPadM 폴리곤 경계 바깥 확장 허용거리(m), 0 이하면 미적용 (2026-10-06 최정우 주석 추가)
  * @param[out] pvtOut 좌표를 포함하는 구역 전부(없으면 빈 목록)
+ *   [보완] 호출 전 내용을 비우지 않고 뒤에 추가한다(clear 안 함) (2026-10-06 최정우 주석 추가)
+ * @return void
 */
 void CChargeDataLoader::GetParkingZonesContaining(const double dfLon, const double dfLat,
 		const double dfPadM, vector<PZONE_INFO> *pvtOut)
@@ -907,6 +925,9 @@ void CChargeDataLoader::GetOpenZonesByLinkId(const uint64 qwLinkID, vector<PZONE
 
 /**
  * @brief 면제도로 구역 복수 조회 (2026-08-23 최정우 추가)
+ * @param[in] qwLinkID 매칭 링크 ID (2026-10-06 최정우 주석 추가)
+ * @param[out] pvtOut 그 링크가 속한 면제도로 구역 전부 — clear 하지 않고 뒤에 추가 (2026-10-06 최정우 주석 추가)
+ * @return void
 */
 void CChargeDataLoader::GetExemptZonesByLinkId(const uint64 qwLinkID, vector<PZONE_INFO> *pvtOut)
 {

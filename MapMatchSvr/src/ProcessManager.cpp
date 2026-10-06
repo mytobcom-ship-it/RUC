@@ -6,6 +6,18 @@
 
 namespace {
 
+/**
+ * @brief 맵매칭 트레이스(MatchTrace) 컨텍스트 채우기 — 원시 GPS·맵매칭 입력·직전 링크를 진단 로그용으로 복사
+ * @param[out] stTraceCtx 채울 트레이스 컨텍스트(먼저 0 으로 초기화)
+ * @param[in] nThreadId 워커 스레드 ID
+ * @param[in] stRawLogInfo 원시 GPS
+ * @param[in] stMapMatchInput 이번 시도에 쓰는 맵매칭 입력(반경·속도·heading·고도)
+ * @param[in] qwPrevLinkId 직전 링크 ID(0=없음)
+ * @param[in] bContinue true=연속(Continue) 시도, false=시작(Begin) 시도
+ * @param[in] pstAltCtx 고도 컨텍스트(nullable) — bHasPrevAlt 일 때만 직전 고도·ROAD_TYPE 복사
+ * @return void
+ * @remark (2026-10-06 최정우 주석 추가)
+*/
 void FillMatchTraceCtx(MATCH_TRACE_CTX& stTraceCtx, int nThreadId, const sRawLogInfo& stRawLogInfo,
 		const MAP_MATCH_INPUT& stMapMatchInput, uint64 qwPrevLinkId, bool bContinue,
 		const ALT_MATCH_CTX *pstAltCtx)
@@ -78,6 +90,8 @@ CProcessManager::~CProcessManager()
  * @param[in] nRadiusMin config radius_min — 적응형 검색 반경 하한 (m) (2026-07-08 최정우)
  * @param[in] nRadiusMax config radius_max — 적응형 검색 반경 상한 (m) (2026-07-08 최정우)
  * @param[in] stAltitudeConfig config altitude_* — 연속 맵매칭 고도 보조 점수
+ *            [정정] 키 이름은 2026-07-21 에 alt_gap·alt_penalty·alt_weight·alt_slope 로 바뀌었다
+ *            (2026-10-06 최정우 주석 수정)
  * @return true(성공), false(실패)
 */
 bool CProcessManager::Initialize(const int nThreadId, CDataLoader *pcDataLoader,
@@ -144,6 +158,8 @@ bool CProcessManager::Initialize(const int nThreadId, CDataLoader *pcDataLoader,
  *     ACCURACY_M=10  → round(2.5×10)=25  → 25m
  *     ACCURACY_M=30  → round(2.5×30)=75  → min(75,50)=50m
  *     ACCURACY_M=NULL → 50m (radius 폴백)
+ *   [보완] 위 예의 radius_max=50 은 작성 당시 값이다 — 현행 config.ini·기본값(CFG_DEF_RADIUS_MAX)은
+ *     75 라 ACCURACY_M=30 이면 75m 가 된다 (2026-10-06 최정우 주석 추가)
 */
 sint16 CProcessManager::CalcAdaptiveRadius(sint16 nAccuracyM) const
 {
@@ -224,6 +240,8 @@ void CProcessManager::BuildMapMatchInput(const sRawLogInfo& stRawLogInfo,
 		//   그 때문에 지금까지 비활성 상태다. 전달을 고치면 그 검사가 깨어나 MATCH_STATUS 가
 		//   재매칭 전체에서 29건(매칭→SKIP) 바뀌는 게 실측 확인됨 — 의도한 동작인지 별도 검토가
 		//   필요해 일부러 고치지 않고 남겨둠(memory: project_full_source_review 계열 참고).
+		//   [정정] "MapMatch.cpp:432" 는 행 번호가 바뀌었다 — CMapMatch::ContinueMapMatch() 안의
+		//   "재구성 경로 방향 타당성" 검사(bHasPrevMatchPos 조건 분기)를 가리킨다 (2026-10-06 최정우 주석 수정)
 		// 원시좌표·방향 동일 여부 함께 전달 — 같은 링크 노이즈 보정 적용 여부 판단용 (2026-09-02 최정우 추가)
 		pstMapMatchInput->bSameRawAndHeadingAsPrev = pstAltCtx->bSameRawAndHeadingAsPrev;
 	}
@@ -409,6 +427,9 @@ bool CProcessManager::RematchBeginBiasedDirectional(const sRawLogInfo& stRawLogI
 
 /**
  * @brief 진단반경 초과여도 기하 최근접 세그먼트 1건 (SKIP 참고용) (2026-07-10 최정우 수정)
+ * @param[in] stRawLogInfo 원시 GPS
+ * @param[out] pstMatchLinkInfo 기하 최근접 세그먼트 결과(좌표·INTERSECT_LEN·링크정보)
+ * @return true(최근접 후보 발견), false(그리드에 후보 없음·인자 무효) (2026-10-06 최정우 주석 추가)
  * @remark 정식·진단반경 매칭 실패 후 호출. MATCHED 아님, 세션 링크·앵커 미갱신.
 */
 bool CProcessManager::FindGeomNearestSegment(const sRawLogInfo& stRawLogInfo,

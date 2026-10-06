@@ -65,6 +65,10 @@ void CCondition::wait(CMutex& mutex)
  *     (CRawLogFetcher::run, CServer::WaitForNextCycle)는 둘 다 깨어난 뒤 종료 플래그를 다시
  *     확인하므로 구분할 필요가 없다 — 구분이 필요해지면 errno 가 아니라 이 반환 코드를 나눠야 한다.
  *   (2026-09-21 최정우 주석 보완)
+ *   [정정] 호출부는 이제 셋이다 — 2026-10-04 에 CThreadPoolWorker::run() 이 추가됐고, 그쪽은
+ *   반환값(false)을 "유휴 tick"(→ Runnable::idle() TTL 검사) 판정에 쓴다. 오류로 인한 false 도
+ *   유휴 tick 으로 취급되지만, 큐가 비어 있고 정지 요청이 없을 때만 idle() 을 부르므로 동작상
+ *   문제는 없다 (2026-10-06 최정우 주석 수정)
 */
 bool CCondition::waitTimed(CMutex& mutex, int nWaitMs)
 {

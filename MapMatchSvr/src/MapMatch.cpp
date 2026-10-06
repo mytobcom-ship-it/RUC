@@ -40,7 +40,8 @@ CMapMatch::~CMapMatch()
 
 /**
  * @brief 데이터 초기화
- * @param[in]
+ * @param[in] pcDataLoader 형상 데이터(link.psf) 로더. nullptr 이거나 아직 로드 전이면 실패
+ *            (2026-10-06 최정우 주석 수정 — 파라미터 이름·설명이 비어 있었다)
  * @return true(성공), false(실패)
 */
 bool CMapMatch::Initialize(CDataLoader *pcDataLoader)
@@ -54,7 +55,8 @@ bool CMapMatch::Initialize(CDataLoader *pcDataLoader)
 }
 
 /**
- * @brief 연속 맵매칭 고도 보조 점수 설정 (config altitude_*)
+ * @brief 연속 맵매칭 고도 보조 점수 설정 (config [mapmatch] alt_gap/alt_penalty/alt_weight/alt_slope)
+ *        (2026-10-06 최정우 주석 수정 — 종전 "altitude_*" 는 2026-07-21 키 이름 변경 전 표기)
  * @param[in] stAltConfig 고도 점수 설정
  * @return void
 */
@@ -112,6 +114,16 @@ bool CMapMatch::BeginMapMatch(MAP_MATCH_INPUT stMapMatchInput,
 	return SetResponseValue(wErrorCode, stMatchEntry, pstMatchLinkInfo);
 }
 
+/**
+ * @brief 짝 링크(qwOppositeLinkID)가 있는 링크가 heading 과 거의 정반대(MM_OPP_FIX_REV_DEG 이상)로
+ *        채택됐는지 판정 — CBeginMapMatch::IsAntiHeadingOpposite() 위임
+ * @param[in] qwLinkID 판정 대상 링크 ID
+ * @param[in] nHeading GPS 방위각(도, NO_ANGLE=판정 안 함)
+ * @param[in] nSpeed GPS 속도(km/h, NO_SPEED 또는 MM_OPP_FIX_MIN_SPEED 미만이면 판정 안 함)
+ * @return true(짝 링크가 있는데 heading 역방향으로 채택 — 신뢰 불가), false(그 외)
+ * @remark 링크 방위각은 시작 노드→종료 노드 직선 방향이다(곡선 링크의 중간 형상은 보지 않음)
+ *         (2026-10-06 최정우 주석 추가)
+*/
 bool CMapMatch::IsAntiHeadingOpposite(uint64 qwLinkID, sint16 nHeading, sint16 nSpeed)
 {
 	return m_cBeginMapMatch.IsAntiHeadingOpposite(qwLinkID, nHeading, nSpeed);
@@ -120,6 +132,11 @@ bool CMapMatch::IsAntiHeadingOpposite(uint64 qwLinkID, sint16 nHeading, sint16 n
 /**
  * @brief 반경 무시 기하 최근접 Begin — 진단반경 초과 SKIP 참고용 (2026-07-10 최정우 수정)
  * @remark MATCHED 아님. MATCH_LAT/LON·INTERSECT_LEN(GPS↔세그먼트 교차점 거리)만 확보.
+ * @param[in] stMapMatchInput 맵매칭 입력 (값 전달). nRadius·nAngle 은 무시되고 각각
+ *            MM_DIAG_RADIUS·NO_ANGLE 로 대체된다
+ * @param[out] pstMatchLinkInfo 최근접 결과(좌표는 도 단위로 역스케일) 또는 에러 코드·메시지
+ * @return true(최근접 1건 확보), false(입력 오류·지도 미적재·후보 없음)
+ *         (2026-10-06 최정우 주석 추가 — @param/@return 이 없었다)
 */
 bool CMapMatch::BeginGeomNearest(MAP_MATCH_INPUT stMapMatchInput, PMATCH_LINK_INFO pstMatchLinkInfo)
 {
@@ -267,6 +284,12 @@ bool CMapMatch::ContinueMapMatch(MAP_MATCH_INPUT stMapMatchInput,
 	//   연결성 편향(qwBiasLinkID)은 일부러 안 줌: 그 편향 자체가 forward-only 그래프와 같은 가정이라
 	//   갈림길 형제 링크에 다시 페널티(MM_CONNECT_PENALTY)를 물려 이 보완 목적을 무력화하기 때문.
 	//   120° 방위각 하드컷(MM_DIR_MAX_DEG)이 나란한/반대방향 도로 오매칭은 이미 차단.
+	//   [정정] 위 한 줄은 사실과 다르다. ① GISUtil::SgmtMatch 는 세그먼트 정·역 두 방향 중 더 가까운
+	//   쪽 각도차를 쓰므로(2026-07-16) 그 값은 최대 90° 라 120° 하드컷이 구조적으로 발동하지 않고,
+	//   ② 여기서 부르는 Begin 은 bIgnoreHeading=true(2026-08-19)라 각도 판정 자체를 하지 않는다.
+	//   반대방향 차단은 실제로는 아래 IsAntiHeadingOpposite 거부권과 Continue 쪽 역방향 적합
+	//   후보 제외(ContinueMapMatch.cpp LinkSgmtMapMatch, 짝 링크 보유 시)가 맡는다
+	//   (2026-10-06 최정우 주석 수정)
 	//   dfAngleCost는 (거리+cap)-거리 형태로 역산되어 부동소수점 반올림 오차가 있을 수 있어
 	//   허용오차(0.01m) 적용 (2026-07-18 최정우 수정)
 	//   2026-08-21 수정 — 편향을 안 주다 보니 그래프상 전혀 무관한(TURN_INFO로 연결 안 된) 링크도
@@ -316,6 +339,9 @@ bool CMapMatch::ContinueMapMatch(MAP_MATCH_INPUT stMapMatchInput,
 		//   주행인데 Continue 각도비용 상한으로 Begin 폴백이 발동, 짝 링크 2040423501 은 이미 그
 		//   구간을 지나 반경 밖이라 FixOppositePairByHeading 도 못 잡고 2040423603 이 그대로 채택돼
 		//   개방형 톨게이트 오과금까지 발생) (2026-08-24 최정우 추가)
+		// pstTraceCtx 를 Continue 와 같은 것으로 넘기므로, 트레이스 로그(LOGFMTD)에 이 병행 Begin 의
+		//   후보 블록이 mode=[Continue] 로 한 번 더 찍히고 nMatchedStep 이 0 으로 덮어써진다 —
+		//   채택 여부와 무관하다. 로그 해석 시 주의(매칭 결과에는 영향 없음) (2026-10-06 최정우 주석 추가)
 		if (m_cBeginMapMatch.StartMapMatch(m_pcDataLoader, stBeginSgmtMatchInput, &wBeginErrorCode,
 				&stBeginMatchEntry, pstTraceCtx, 0)
 			&& (stBeginMatchEntry.dfCost < stMatchEntry.dfCost)
@@ -448,6 +474,10 @@ bool CMapMatch::ContinueMapMatch(MAP_MATCH_INPUT stMapMatchInput,
 		//   구간(예: 주정차구역 내 공터 이동)은 판단 근거가 없어 제외 — MM_OPP_FIX_MIN_SPEED 재사용
 		//   (실측 기준: 시속 3km 미만은 heading 노이즈로 취급, IsAntiHeadingOpposite 와 동일 전제)
 		//   (2026-09-04 최정우 추가, 사용자 지시)
+		// ※ 현재 이 검사는 **발동하지 않는다** — 조건의 bHasPrevMatchPos 를 ProcessManager 가 전달하지
+		//   않아 항상 false 다. 배선 시 교차로 회전·정차 후 출발 tick 만 SKIP 되는 오탐(발동 6회 전부
+		//   hops=1)이 실측돼 미배선 유지로 확정됐다(ProcessManager.cpp 2026-09-16 주석 참고).
+		//   살리려면 "hops>=2" 같은 가드가 먼저 필요하다 (2026-10-06 최정우 주석 추가)
 		if ((stMapMatchInput.nAngle >= 0) && (stMapMatchInput.nSpeed >= 0)
 			&& (stMapMatchInput.nSpeed >= MM_OPP_FIX_MIN_SPEED) && stMapMatchInput.bHasPrevMatchPos)
 		{
@@ -699,8 +729,10 @@ bool CMapMatch::IsValidAngle(sint16& nAngle)
 }
 
 /**
- * @brief 최대 연속 측위 유효성 검사
- * @param[in] nSearchStep 최대 연속 측위 값
+ * @brief 연속 맵매칭 탐색 depth(nSearchStep) 유효성 검사
+ *        (2026-10-06 최정우 주석 수정 — 종전 "최대 연속 측위" 는 이 값의 의미와 달랐다. config
+ *        [mapmatch] maxstep 에 공백 적응 확장(MM_STEP_EXTEND_*)을 더한 링크 그래프 탐색 깊이다)
+ * @param[in] nSearchStep 연속 탐색 depth
  * @return true(성공), false(실패)
 */
 bool CMapMatch::IsValidSearchStep(sint16& nSearchStep)

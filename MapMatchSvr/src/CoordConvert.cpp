@@ -10,6 +10,8 @@
  * @param[in] inLon 경도
  * @param[out] outLat WGS84 위도
  * @param[out] outLon WGS84 경도
+ *        [정정] 출력은 도 단위 위경도가 아니라 **검색 좌표(도×360000, 반올림한 uint32 정수)** 다 —
+ *        link.psf 세그먼트 좌표와 같은 스케일. 입력은 WGS84 도 (2026-10-06 최정우 주석 수정)
  * @return void
 */
 void CCoordConvert::WGS84ToSearchCoord(double inLat, double inLon, uint32 *outLat, uint32 *outLon)
@@ -390,6 +392,13 @@ void CCoordConvert::GRS80GEOToKATECH(double inLat, double inLon, double *outLat,
  * @param[out] outLat WGS84GEO 위도
  * @param[out] outLon WGS84GEO 경도
  * @return void
+ * @warning GRS80 과 WGS84 는 실용상 같은 측지계(차이 1m 미만)인데, 이 함수는 BESSEL 을 경유한다.
+ *   GRS80→BESSEL(GRS80GEOToBESSELGEO, ΔX/Y/Z=145.907/−505.034/−685.756)과 BESSEL→WGS84
+ *   (BESSELGEOToWGS84GEO, ΔX/Y/Z=−128/481/664)의 3변수 값이 서로 달라 상쇄되지 않고, 차이분
+ *   (약 17.9/−24.0/−21.8m, 3차원 합 약 37m)만큼 좌표가 이동한다. GRS80TM·GRS80TM2010·GRS80UTMK →
+ *   WGS84 변환도 모두 이 함수를 거친다. 현재 MapMatchSvr 매칭 경로(CCoordinate)는 이 계열을
+ *   쓰지 않고, CreateData 의 동일 복사본도 config coordtype=1(WGS84) 이라 실피해는 없다 —
+ *   GRS80 계열 입력을 새로 받게 되면 먼저 검증할 것 (2026-10-06 최정우 주석 추가)
 */
 void CCoordConvert::GRS80GEOToWGS84GEO(double inLat, double inLon, double *outLat, double *outLon)
 {
@@ -482,6 +491,7 @@ void CCoordConvert::GRS80GEOToEPSG3857(double inLat, double inLon, double *outLa
  * @param[in] inLon GRS80GEO 경도
  * @param[out] outLat GRS80TM 위도
  * @param[out] outLon GRS80TM 경도
+ *        [정정] 출력은 GRS80TM 이 아니라 GRS80UTMK 의 Northing(outLat)·Easting(outLon), 미터 (2026-10-06 최정우 주석 수정)
  * @return void
 */
 void CCoordConvert::GRS80GEOToGRS80UTMK(double inLat, double inLon, double *outLat, double *outLon)
@@ -1437,6 +1447,7 @@ void CCoordConvert::GRS80UTMKToBESSELTM(double inLat, double inLon, double *outL
  * @brief GRS80UTMK -> GRS80GEO 변환
  * @param[in] inLat GRS80TM 위도
  * @param[in] inLon GRS80TM 경도
+ *        [정정] 입력은 GRS80TM 이 아니라 GRS80UTMK 의 Northing(inLat)·Easting(inLon), 미터 (2026-10-06 최정우 주석 수정)
  * @param[out] outLat GRS80GEO 위도
  * @param[out] outLon GRS80GEO 경도
  * @return void

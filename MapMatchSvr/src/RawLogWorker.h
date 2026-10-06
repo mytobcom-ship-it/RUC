@@ -40,6 +40,9 @@ typedef struct sChargeInsertRow
 	string							strTripId;
 	string							strDeviceKey;
 	string							strChargeSeq;						// PRIM_CHARGEHAND.trip_seq
+																		//   행 생성 시엔 세션 nChargeSeq(임시값)가 들어가고, 실제 DB
+																		//   값은 ReleaseChargeQueue() 가 방출 시점에 nEmitSeq+1 로
+																		//   덮어쓴다 (2026-10-06 최정우 주석 추가)
 	string							strChargeType;						// 0=NODE_STEP(일반도로), 1=OPEN_ROAD(개방식),
 																		//   2=CLOSED_ROAD(폐쇄식), 3=SPEED(구간단속),
 																		//   4=PARKING(주정차), 5=EXEMPT(면제도로)
@@ -47,9 +50,13 @@ typedef struct sChargeInsertRow
 	string							strChargeUnit;						// 0=NODE(일반도로·개방식), 1=LINK(폐쇄식·구간단속·
 																		//   면제도로), 2=POLYGON(주정차)
 																		//   (2026-09-17 최정우 보완)
-	string							strLinkId;
+	string							strLinkId;							// 현재 전 유형 공통으로 빈 값(DB NULL) — Build* 전부 "" 고정
+																		//   (2026-10-06 최정우 주석 추가)
 	string							strFromId;							// 개방형=구역road_id(2026-08-25 게이트ID에서 변경), 폐쇄형=입구게이트ID
 	string							strToId;							// 개방형=구역road_id(2026-08-25 게이트ID에서 변경), 폐쇄형=출구게이트ID
+																		// [보완] 전 유형: 일반도로(0)=링크ID, 개방·주정차·면제(1·4·5)=
+																		//   구역 road_id, 폐쇄·구간단속(2·3)=게이트ID. 출구 미확인
+																		//   강제마감 행은 TO_ID 빈 값 (2026-10-06 최정우 주석 수정)
 	string							strFromLat;
 	string							strFromLon;
 	string							strToLat;
@@ -58,15 +65,30 @@ typedef struct sChargeInsertRow
 	string							strZoneName;						// base_roadlink.road_nm (없으면 빈 문자열)
 	string							strDistM;							// 폐쇄형: 입구~출구 누적거리(m). 개방형(2026-08-25부터) — 정상진입 run은
 																		//   구역 전체길이, 트립시작 run은 출발~이탈 실관측 거리 (2026-08-12 최정우 추가)
+																		// [보완] 폐쇄·구간단속 정상 진출은 게이트 간 구역 선 길이
+																		//   (CalcZoneSpanM), 일반도로·면제·주정차는 실측 누적거리
+																		//   (2026-10-06 최정우 주석 추가)
 	string							strSpeedKmh;						// 순간속도 — 직전 매칭 위치·시각 있을 때만 계산, 없으면 빈 값 (2026-08-12 최정우 추가)
+																		// [정정] 순간속도가 아니라 **평균속도**(dist_m ÷ 체류/경과시간
+																		//   ×3.6)다 — 전 유형 Build* 가 이 방식. 시간이 0 이하면 빈 값
+																		//   (DB 0). 예외: 인수인계 행 등 시간 산출 불가 행은 그 tick 의
+																		//   보고 속도를 쓴다 (2026-10-06 최정우 주석 수정)
 	string							strSpeedLimitKmh;					// 매칭 링크 제한속도(MATCH_LINK_INFO.nMaxSpeed) (2026-08-12 최정우 추가)
+																		// [정정] 폐쇄형만 매칭(또는 직전) 링크 제한속도(진입 애매 시 "0"),
+																		//   구간단속은 구역 등록값(base_roadlink.speed_limit_kmh),
+																		//   그 외 유형·출구 미확인 강제마감은 빈 값(DB 0)
+																		//   (2026-10-06 최정우 주석 수정)
 	string							strOccurDt;							// YYYYMMDDHH24MISS
 	string							strTripStartDt;						// YYYYMMDDHH24MISS (trip_id 에서 추출)
 	string							strTollgateId;						// 개방형·폐쇄형 모두 실측상 빈 값
+																		// [정정] 개방형(1)은 run 중 M게이트를 실제로 지났으면 그 게이트ID를
+																		//   넣는다(BuildOpenZoneRow). 그 외 유형은 빈 값 (2026-10-06 최정우 주석 수정)
 	string							strEntryTollgateId;					// 폐쇄형 전용: 입구게이트ID. 개방형은 빈 값 (2026-08-12 최정우 추가)
 	string							strExitTollgateId;					// 폐쇄형 전용: 출구게이트ID. 개방형은 빈 값 (2026-08-12 최정우 추가)
 	string							strRegDt;							// YYYYMMDDHH24MISS — INSERT 실행 시각(벽시계)
 																		//   (2026-08-12 최정우 추가)
+																		//   Build* 가 넣은 행 생성 시각은 ReleaseChargeQueue() 가 방출
+																		//   시점 벽시계로 덮어쓴다 (2026-10-06 최정우 주석 추가)
 	string							strUpdDt;							// [2026-09-17 최정우 정정] "strRegDt 와 항상 동일" 이
 																		//   아니다. 게이트형·주정차(OPEN/CLOSED/SPEED/PARKING)는
 																		//   reg_dt 와 같은 값이지만, 일반도로·면제도로
@@ -75,12 +97,27 @@ typedef struct sChargeInsertRow
 																		//   (2026-08-14) "구역 이탈과 트립 종료가 같은 tick 이면
 																		//   진출시각으로 맞춘다" 의 결과. 트립 정상종료 시
 																		//   [trip_end] UPDATE 가 다시 GPS 종료시각으로 덮는다
+																		// [정정] 2026-10-04 부터 위 설명은 더 이상 맞지 않는다 — 전 유형
+																		//   Build* 가 strRegDt 와 같은 값을 넣고, ReleaseChargeQueue() 가
+																		//   방출(INSERT 직전) 시점에 REG_DT·UPD_DT 를 같은 벽시계로 다시
+																		//   찍는다. [trip_end] UPDATE 는 UPD_DT 를 그 UPDATE 실행
+																		//   벽시계로 갱신한다(GPS 종료시각 아님) (2026-10-06 최정우 주석 수정)
 	string							strChargeYn;						// 빈 값=DB 기본(Y). 폐쇄형 입/출구 게이트 이상 시 "N" 명시 (2026-08-12 최정우 추가)
 	string							strChargeStatus;					// 빈 값=DB 기본(0=PENDING). 폐쇄형 입/출구 게이트 이상 시 "4"(SKIP) 명시 (2026-08-12 최정우 추가)
+																		// [정정] 게이트 이상·강제마감은 "3"(AUDIT)이다(bGateAnomaly ? "3" : "0").
+																		//   "4"(SKIP)는 면제도로(5) 강제마감 전용. 엔진은 0/3/4 만 쓰고
+																		//   1·2 는 과금서버 소유 (2026-10-06 최정우 주석 수정)
 	string							strStaySeconds;						// 체류시간(초) — 주정차 전용(컬럼 코멘트: "체류 시간(초). 주정차 위반 판단"),
 																		//   다른 3종은 빈 값(DB 기본 0) (2026-08-13 최정우 추가)
+																		// [정정] 현재는 6개 유형 전부 체류/경과시간(초)을 채운다
+																		//   (2026-10-06 최정우 주석 수정)
 	string							strTripEndDt;						// 주정차 TTL 만료 강제마감 전용 — 더 이상 GPS 수신 불가로 판단한 시각.
 																		//   그 외는 빈 값(NULL 유지, 실제 TRIP_EVENT=2 시 [trip_end] UPDATE가 채움) (2026-08-13 최정우 추가)
+																		// [정정] 주정차는 채우지 않는다. 직접 채우는 곳은 폐쇄형 출구
+																		//   미확인 강제마감(AppendExpiredClosedRoadCharge)·구간단속 미러
+																		//   강제마감(AppendExpiredSpeedZoneCharge) 둘뿐이고, 나머지는 빈 값으로
+																		//   INSERT 후 [trip_end] UPDATE(정상종료·TTL 마감 공용)가 채운다
+																		//   (2026-10-06 최정우 주석 수정)
 	string							strStartGpsSeq;						// 진입 시점 PRIM_RAWGPS.GPS_SEQ — 웹뷰어 G순번과 동일 개념
 																		//   (2026-08-28 최정우 추가)
 	string							strEndGpsSeq;						// 구역 안에서 실제로 마지막 확인된 GPS_SEQ(보간 경계 tick이 아님)
@@ -152,6 +189,9 @@ typedef struct sZoneRunSession
 																		//   구역내 확정은 seq38 인데 디바운스 대기 중 seq42~44 가 이미
 																		//   RL-Z00003(구간단속)로 넘어가 있어, 이탈 확정 시각(dtGPS)을
 																		//   그대로 쓰면 두 구역 범위가 겹쳐 보임) (2026-08-24 최정우 추가)
+																		// [정정] "일반도로만 사용"은 현재 틀리다 — 개방형(Process/
+																		//   AppendExpired/AppendTripEnd OpenGate)·면제도로도 마감 시각으로
+																		//   쓴다 (2026-10-06 최정우 주석 수정)
 	uint32							dwLastInZoneGpsSeq;					// dtLastInZoneTime 과 동일 tick 의 GPS_SEQ —
 																		//   PRIM_CHARGEHAND.end_gps_seq 원본(OPEN·NODE_STEP)
 																		//   (2026-08-28 최정우 추가)
@@ -159,11 +199,14 @@ typedef struct sZoneRunSession
 	int								nExitTicks;							// 이탈 연속 감지 횟수(디바운스) — 일반도로(NODE_STEP)만 사용
 																		//   (2026-08-24 최정우 추가 — 순간 오매칭 1틱으로 세션이
 																		//   쪼개지는 결함 방지, PARKING park_exitcnt 와 동일 원리)
+																		// [정정] 개방형(ProcessOpenGateCharge) run 도 이 카운터로 이탈
+																		//   디바운스한다 — "일반도로만" 아님 (2026-10-06 최정우 주석 수정)
 	// 이탈 디바운스(node_exitcnt) 스트릭의 "첫" 밖 tick 좌표/시각 — 디바운스가 몇 틱 뒤에야
 	//   확정되므로, 확정 시점(마지막 tick)을 그대로 보간 기준으로 쓰면 이미 구역에서 한참 멀어진
 	//   지점과 보간하게 돼 엉뚱한 결과가 나온다(PARK_RUN_SESSION dfFirstOutX/Y·dtFirstOut 과 동일
 	//   문제·동일 해법). nExitTicks 가 0→1 로 바뀌는 순간(디바운스 시작 전)에 잡아뒀다가, 경계
 	//   노드 통과 시각 보간의 "밖" 기준점으로 쓴다(2026-08-25 최정우 추가, NODE_STEP/OPEN 공용)
+	//   면제도로(ProcessExemptZoneCharge)도 이탈 경계 보정에 쓴다 (2026-10-06 최정우 주석 추가)
 	double							dfFirstOutX;
 	double							dfFirstOutY;
 	time_t							dtFirstOut;
@@ -421,6 +464,9 @@ typedef struct sVehicleTripSession
 	//   "실제 지나간 링크 중 일반도로로 청구되지 않은 길이"를 트립 단위로 집계해 규모를 먼저 본다.
 	//   [2026-09-22 2단계 적용됨] 측정만 하던 단계를 지나, 지금은 FillUncoveredLinkRows() 가
 	//   안 덮인 구간을 일반도로 거리로 복구한다. 주정차 폴리곤 안 링크는 제외한다(확정 정책).
+	//   [정정] 2026-10-04 E16(MM_PARK_SUPPRESS_NODESTEP=false) 이후 폴리곤 안 링크 제외는 꺼져 있다 —
+	//   폴리곤 안 링크도 복구 대상이며, 제외는 트립 첫 tick 링크·타 과금유형 링크뿐이다
+	//   (2026-10-06 최정우 주석 수정)
 	// 이번 트립이 실제 경유한 링크 시퀀스(연속 중복 제거) — 링크와 함께 **그 tick 의 GPS_SEQ·시각**을
 	//   들고 있어야 안 덮인 구간을 행으로 복구할 때 START/END_GPS_SEQ·OCCUR_DT 를 채울 수 있다.
 	struct sTripPathLink
@@ -582,6 +628,9 @@ typedef struct sVehicleTripSession
 	//   구역판정(위치)+SPEED_KMH(서행 구분)+체류시간만으로 판정 — DRIVE_STATUS 는 안 씀(엔진 on
 	//   상태 정차 위반을 놓칠 위험), 위치반경 기반 별도 정지판정도 안 씀(SPEED_KMH로 충분,
 	//   [[project_parking_match_pseudocode]] 2026-08-13 개정 참고) (2026-08-13 최정우 추가)
+	//   [보완] 2026-08-22 부터 원시좌표에 더해 신뢰 매칭좌표도 본다(규칙 1~5). 속도 게이트
+	//   (park_speedmax)는 기본 0=비활성이라 현재는 위치·체류시간만으로 판정한다. "다른 3종"은
+	//   현재 다른 5개 유형이다 (2026-10-06 최정우 주석 추가)
 	// 주정차 — 구역별 세션·후보 목록 (2026-08-23 최정우 수정)
 	vector<PARK_RUN_SESSION>		vtParkRuns;
 	vector<PARK_CANDIDATE>			vtParkCands;
@@ -590,6 +639,10 @@ typedef struct sVehicleTripSession
 	//   새 구역 후보(PARK_CANDIDATE)가 열리는 순간 "그 직전엔 밖이었던 좌표"로 쓰인다. 트립의
 	//   첫 틱은 bHasLastRawTick=false 라 보간을 건너뛰고 원시 GPS 시각을 그대로 쓴다
 	//   (사용자 지시, 2026-08-24 최정우 추가)
+	//   [주의] "트립의 첫 틱은 false" 는 **세션이 새로 만들어진 경우에만** 성립한다. 이 4필드(와 아래
+	//   dfLastParkMatch* 4필드)는 ResetTripSessionForBegin() 에서 리셋되지 않으므로, 종료신호 없이
+	//   같은 DEVICE_KEY 세션에서 트립이 바뀌면 새 트립 첫 tick 이 이전 트립 마지막 tick 과 보간된다
+	//   (2026-10-06 최정우 주석 추가)
 	double							dfLastRawTickX;
 	double							dfLastRawTickY;
 	time_t							dtLastRawTick;
@@ -896,6 +949,16 @@ typedef struct sVehicleTripSession
 	uint64							qwStartCandLinkB;
 	vector<size_t>					vtStartCandIdxA;
 	vector<size_t>					vtStartCandIdxB;
+	// 후보 A/B 에 편입되느라 qwLastConfirmedLinkID 로 확정되지 못한 **마지막 tick** — 배치 종료 시
+	//   후보를 비울 때 이 tick 을 앵커로 확정한다(run() 의 배치 종료 정리 참고). 실시간 수집에서는
+	//   배치가 장치당 1~2 tick 이라 후보가 opp_streakmax 에 못 미친 채 매 배치 비워져,
+	//   qwLastConfirmedLinkID 가 트립 내내 0 에 머물렀다(실측 000370_20261006133737 — 주행 13분
+	//   뒤 RL-Z00005·RL-Z00003 진입이 "트립 시작"으로 오판돼 진입게이트 공란, 구간단속 위반 미적재)
+	//   (2026-10-06 최정우 추가)
+	uint64							qwStartCandLastLinkID;
+	time_t							dtStartCandLast;
+	uint32							dwStartCandLastGpsSeq;
+	float							fStartCandLastSpeed;
 	// 보류 행 처리 시점의 과금용 "직전 매칭 위치·시각" 스냅샷 — dfLastMatchX/Y 등은 RunMapMatch 가
 	//   매 행마다 실시간으로 최신값으로 전진시키므로, 보류 행을 나중에 commit할 때는 그 당시(보류
 	//   시점) 값을 써야 이동거리·속도가 정확함(그렇지 않으면 이미 몇 틱 지난 최신 위치를 "직전
@@ -1037,6 +1100,7 @@ typedef struct sVehicleTripSession
 		qwSkipRunAnchorLinkID(0),	// (2026-09-01 최정우 추가)
 		qwStartCandLinkA(0),	// (2026-08-24 최정우 추가)
 		qwStartCandLinkB(0),	// (2026-08-24 최정우 추가)
+		qwStartCandLastLinkID(0), dtStartCandLast(0), dwStartCandLastGpsSeq(0), fStartCandLastSpeed(0.0f),	// (2026-10-06 최정우 추가)
 		dfPendingPrevMatchX(0.0),	// (2026-08-21 최정우 추가)
 		dfPendingPrevMatchY(0.0),	// (2026-08-21 최정우 추가)
 		dtPendingPrevMatchGps(0),	// (2026-08-21 최정우 추가)
@@ -1085,11 +1149,18 @@ typedef struct sRawLogUpdateRow
  *   실측(59.11.91.162)은 INSERT 자체를 트립종료 시점에 하는 방식이라 reg_dt=upd_dt=trip_end_dt가
  *   항상 같았지만, 이 구현은 즉시 INSERT 방식을 유지하고 trip_end_dt 만 나중에 UPDATE 하므로
  *   reg_dt(최초 INSERT 시각)와 upd_dt(이 UPDATE 시각)가 달라질 수 있음 — 의도된 차이.
+ * @remark [보완] 현재 과금 행은 "즉시"가 아니라 워터마크 큐(vtPendingEmit)에서 방출될 때 INSERT 된다.
+ *   이 구조체는 정상 종료(TRIP_EVENT=END)뿐 아니라 TTL·종료신호 없는 트립 전환·서버 종료 마감
+ *   (FlushOpenRunsAsAbnormalEnd 의 pvtAbnormalEndUpdates)에도 쓰이며, 둘 다 같은 [trip_end] SQL 이다
+ *   ([trip_abend] 는 2026-10-04 삭제). 정상 종료분은 과금 INSERT 와 같은 배치 트랜잭션에서 실행된다
+ *   (2026-10-06 최정우 주석 추가)
 */
 typedef struct sTripEndUpdateRow
 {
 	string							strTripId;
 	string							strTripEndDt;						// YYYYMMDDHH24MISS — END GPS 의 실제 수신 시각
+																		//   강제마감 경로는 마감 기준 시각(TTL=그 트립 마지막 GPS 시각
+																		//   dtLastGpsEventTime, 없으면 dtLastSeen) (2026-10-06 최정우 주석 추가)
 	string							strUpdDt;							// 이 UPDATE 실행 시각
 } TRIP_END_UPDATE_ROW, *PTRIP_END_UPDATE_ROW;
 
@@ -1102,13 +1173,18 @@ typedef struct sRawLogWorkerConfig
 	CPostgrePool					*pcPostgrePool;
 	CProcessManager					*pcProcessManager;
 	CChargeDataLoader				*pcChargeDataLoader;				// 게이트·구역 캐시 — 개방형 과금 판정용(nullptr=과금 비활성) (2026-08-12 최정우 추가)
+																		//   [보완] 현재는 6개 과금유형 전부의 판정용(게이트·구역·주정차
+																		//   폴리곤·과태료 최소시간) (2026-10-06 최정우 주석 추가)
 	CDataLoader						*pcDataLoader;						// 형상정보(LINK_INFO.qwOppositeLinkID 조회) — 반대편 짝 링크 1틱 오매칭 보정용 (2026-08-21 최정우 추가)
 	string							strUpdateSQL;						// [rawgps_update] 완료(1/3/4) 및 release(0) 공용
 	string							strChargeInsertSQL;					// [charge_insert] 개방형 게이트 통과 bulk INSERT (비어있으면 비활성) (2026-08-12 최정우 수정)
+																		//   [보완] 현재는 6개 CHARGE_TYPE 공용 INSERT (2026-10-06 최정우 주석 추가)
 	string							strTripEndUpdateSQL;				// [trip_end] 트립 종료 시 trip_end_dt UPDATE (비어있으면 비활성) (2026-08-12 최정우 추가)
 	string							strTripSeqMaxSQL;					// [trip_seqmax] 트립의 기존 최대 TRIP_SEQ 조회(읽기 전용, 비어있으면 이어 매기기 비활성) (2026-10-04 최정우, 사용자 확정 — TTL 마감 권장안)
 	int								nWorkerThreads;
 	int								nTtlSec;							// trip_id 세션 유지 시간 (초, 0=비활성)
+																		//   [정정] 세션 키는 DEVICE_KEY — 마지막 처리(dtLastSeen, 벽시계)
+																		//   후 이 시간이 지나면 마감 (2026-10-06 최정우 주석 수정)
 	int								nMatchTimeoutMs;					// 1 GPS 맵매칭 처리 임계 (ms, 초과 시 ERROR 격리, 0=비활성)
 	int								nRetryMax;							// release→PENDING 재시도 상한. 초과 시 ERROR(4) 고정. 0=무제한
 	int								nConnRetryMax;						// [database] retrymax — 풀 연결 핸들 확보 재시도 최대 횟수 (회, 2026-07-10 최정우 추가)
@@ -1157,6 +1233,9 @@ public:
 	//     (61/51). 판정(charge_yn/status)은 어느 쪽이든 동일하다 (2026-09-16 최정우 추가)
 	// #6: dtLastSeen 경과 세션 제거 (모니터 주기 호출). pcConn 은 TTL 만료 시점에 열려 있는 주정차
 	//   세션을 즉시 위반 INSERT 하는 데 씀(2026-08-13 최정우 추가)
+	//   [정정] 모니터 스레드가 아니라 워커 자기 스레드에서 호출된다 — run() 배치 끝, idle()(유휴 대기
+	//   상한 경과), FlushAllSessionsOnShutdown()(bForceAll=true). pcConn 은 주정차뿐 아니라 열린 전
+	//   유형 마감 행 INSERT·[trip_end] UPDATE 트랜잭션에 쓴다 (2026-10-06 최정우 주석 수정)
 	int ExpireTtlSessions(int nThreadId, int nTtlSec, PGconn *pcConn, bool bForceAll = false);
 	// 서버 종료 시 모든 워커 슬롯의 열린 과금 구간을 마감한다 — 세션은 in-memory 라 재기동 시
 	//   그대로 사라지므로(ExpireTtlSessions 주석의 "별도 한계"), 종료 직전에 마감해 기록으로
@@ -1203,6 +1282,9 @@ private:
 	//   함께 1건 적재. road_kind='2'(폐쇄형)인 구역의 게이트만 처리(구간단속 road_kind='3' 등 제외) (2026-08-12 최정우 추가)
 	//   2026-08-13 재작성: 한 링크에 같은 방향 게이트 2개 이상/gate_div='B' 겸용 게이트/서로 다른
 	//   구역의 출구·입구가 같은 링크를 공유하는 경우까지 처리 — CollectGateCandidates() 참고
+	//   [보완] 2026-09-23 부터 입구 게이트 없이 구역 링크에 올라탄 중간 진입도 run 을 열고 N/3(코드 21)로
+	//   마감한다. 이탈은 출구 게이트 또는 zone_exitcnt 디바운스(출구 미확인 N/3·23)로 확정
+	//   (2026-10-06 최정우 주석 추가)
 	void ProcessClosedRoadCharge(int nThreadId, const sRawLogInfo& stRawLogInfo,
 		const MATCH_LINK_INFO& stMatchLinkInfo, VEHICLE_TRIP_SESSION *pstSession,
 		vector<CHARGE_INSERT_ROW> *pvtChargeInserts);
@@ -1210,6 +1292,10 @@ private:
 	//   charge_yn/charge_status 는 기본 Y/0(다른 유형과 동일, 2026-08-13 최정우 수정 — 원래는
 	//   항상 N/4 고정이었음) (2026-08-12 최정우 추가). 2026-08-13 재작성 — 폐쇄형과 동일한
 	//   멀티게이트/공유링크/gate_div='B' 대응 적용
+	//   [보완] 2026-09-06 부터 SPEED 행은 진입·진출 게이트가 모두 확인되고 평균속도 ≥ 제한속도일 때만
+	//   만들고, 제한속도가 등록돼 있으면 위반 여부와 무관하게 같은 구간을 일반도로 미러(Y/0)로도 남긴다.
+	//   게이트 이상·출구 미확인이면 SPEED 행 없이 미러만. 중간 진입은 run 을 열지 않는다
+	//   (2026-10-06 최정우 주석 추가)
 	void ProcessSpeedZoneCharge(int nThreadId, const sRawLogInfo& stRawLogInfo,
 		const MATCH_LINK_INFO& stMatchLinkInfo, VEHICLE_TRIP_SESSION *pstSession,
 		vector<CHARGE_INSERT_ROW> *pvtChargeInserts);
@@ -1235,6 +1321,9 @@ private:
 	//   새 세션 시작(경계 전환 병합 — 같은 함수 안 PARK_RUN_SESSION 개시 블록을 그대로 탄다)
 	//   2026-08-22 확장 — 규칙 2(매칭 좌표도 폴리곤 내)·규칙 4(매칭 좌표가 폴리곤 밖이면 즉시 해제)를
 	//   위해 매칭 결과를 함께 받는다. bMatchTrusted=false 면 매칭 좌표를 보지 않고 원시 좌표만으로 판정.
+	//   [정정] 현재 정상 경로의 호출은 RunMapMatch "뒤"(매칭 결과 전달), SKIP 조기반환 경로만 매칭 전
+	//   (bMatchTrusted=false) 호출이다. 1 tick 지연 확정(CommitPendingRow)을 거치지 않아 다른 유형보다
+	//   한 tick 앞선다. SPEED_KMH 게이트(park_speedmax)는 기본 0=비활성 (2026-10-06 최정우 주석 수정)
 	// bTrustedTripEnd — ProcessOpenGateCharge() 주석 참고, 스퓨리어스 END 로 트립종료 강제마감이
 	//   오작동하지 않도록 stRawLogInfo.nTripEvent 대신 이 값을 봐야 함 (2026-08-25 최정우 추가)
 	void ProcessParkingCharge(int nThreadId, const sRawLogInfo& stRawLogInfo,
@@ -1289,10 +1378,15 @@ private:
 	//   [trip_abend] 가 처리하며, 심사 큐(charge_status=3)에는 넣지 않는다 — 면제 건은 사람이
 	//   재확인할 대상이 아니기 때문(사용자 지시, 2026-08-30 최정우 수정 — 이전에는 정상 통행까지
 	//   N/4 로 고정해 정상/이상이 구분되지 않았다).
+	//   [정정] [trip_abend] 는 2026-10-04 삭제됐다 — TTL·잔여 tick·종료신호 없는 트립 전환·서버 종료
+	//   마감은 모두 AppendExpiredExemptZoneCharge() 가 N/4(코드 51/52)로 직접 기록한다
+	//   (2026-10-06 최정우 주석 수정)
 	//   2026-08-14 재진입 유예 추가: "무존" 상태여도 exempt_regrace 초 동안 즉시 확정하지 않고
 	//   대기 — 그 안에 같은 구역으로 복귀하면 병합, 초과하면 확정 마감. 확정 마감 시점에 이미 다른
 	//   구역 위라면 유예 없이 곧바로 그 구역으로 새 세션 시작(경계 전환 병합, BeginExemptZoneSession
 	//   재사용). 진행 중 TTL 만료로 세션이 강제 마감되는 경우는 AppendExpiredExemptZoneCharge() 가 별도 처리
+	//   [정정] BeginExemptZoneSession() 은 현재 존재하지 않는다 — 세션 개시는 이 함수 안에서 직접 한다.
+	//   유예는 구역 밖 주행거리가 exempt_outmax 이상이면 시간과 무관하게 무효 (2026-10-06 최정우 주석 수정)
 	// bTrustedTripEnd — ProcessOpenGateCharge() 주석 참고 (2026-08-25 최정우 추가)
 	void ProcessExemptZoneCharge(int nThreadId, const sRawLogInfo& stRawLogInfo,
 		const MATCH_LINK_INFO& stMatchLinkInfo, VEHICLE_TRIP_SESSION *pstSession,
@@ -1309,6 +1403,8 @@ private:
 	//   면제도로만 N/4(SKIP)를 쓴다: 과금 대상이 아니라 심사 큐에 올릴 필요가 없기 때문
 	//   (사용자 판단 계승 2026-08-14, 2026-08-30 재확인). trip_end_dt 를 채운 채 INSERT 하므로
 	//   [trip_abend] 와 겹치지 않는다(주정차와 동일 패턴)
+	//   [정정] BuildExemptRow·BuildParkRow 는 trip_end_dt 를 채우지 않는다(빈 값 INSERT 후 [trip_end]
+	//   UPDATE 가 채움). [trip_abend] 는 2026-10-04 삭제 (2026-10-06 최정우 주석 수정)
 	//   [2026-09-17 최정우 정정] 이 설명이 BuildExemptRow() 앞에 붙어 있던 것을 제자리로 옮김
 	void AppendExpiredExemptZoneCharge(int nThreadId, const string& strDeviceKey,
 		const VEHICLE_TRIP_SESSION& stSession, vector<CHARGE_INSERT_ROW> *pvtOut,
@@ -1319,6 +1415,9 @@ private:
 	// 일반도로(ROAD_KIND=0, NODE_STEP) 진입/이탈 판정 — 비과금도로와 동일 구조(게이트 없이 매칭
 	//   링크→구역 역인덱스)지만 실제 과금 대상이라 이탈·트립종료 시 항상 Y/0 으로 1건 기록
 	//   (사용자 지시, 2026-08-14 추가)
+	//   [보완] 2026-09-01 부터 미등록 링크·게이트형 구역 run 이 닫힌 링크도 대상이다
+	//   (IsLinkNodeStepEligible). "항상 Y/0" 은 정상 마감 기준이며, SKIP 구간 직선추정은 N/3(코드 1·2),
+	//   강제마감은 N/3(코드 61/62)이다 (2026-10-06 최정우 주석 추가)
 	// bTrustedTripEnd — ProcessOpenGateCharge() 주석 참고 (2026-08-25 최정우 추가)
 	void ProcessNodeStepCharge(int nThreadId, const sRawLogInfo& stRawLogInfo,
 		const MATCH_LINK_INFO& stMatchLinkInfo, VEHICLE_TRIP_SESSION *pstSession,
@@ -1451,6 +1550,8 @@ private:
 	//   CLOSED/SPEED 의 무조건 flush(ProcessRawLog bTrustedTripEnd 블록)와 동일 안전망. run 별
 	//   dtLastInZoneTime/dwLastInZoneGpsSeq(정확한 GPS 종료시각) 사용, AppendExpiredOpenGateCharge()
 	//   와 달리 wall-clock(dtLastSeen) 아님 — 자세한 배경은 .cpp 주석 참고
+	//   [정정] 현재는 AppendExpiredOpenGateCharge() 도 run 별 dtLastInZoneTime/dwLastInZoneGpsSeq 를
+	//   쓰고, 그 값이 없을 때만 dtLastSeen 으로 대체한다 (2026-10-06 최정우 주석 수정)
 	void AppendTripEndOpenGateCharge(int nThreadId, const string& strDeviceKey,
 		const VEHICLE_TRIP_SESSION& stSession, vector<CHARGE_INSERT_ROW> *pvtOut);
 	// 세션이 지워지기(TTL) 또는 정리되기(트립 정상종료, TRIP_EVENT=2) 직전, 아직 입구만 통과하고
@@ -1461,6 +1562,10 @@ private:
 	//   dtEndTime — 마감 기준 시각(trip_end_dt/stay_seconds 계산용): TTL 경로는 세션의 마지막
 	//   처리 시각(dtLastSeen, wall-clock), 트립 정상종료 경로는 그 tick의 GPS 시각(dtGPS) — 호출
 	//   측이 상황에 맞는 값을 넘겨줌(2026-08-20 최정우 수정 — 트립 정상종료 시에도 호출되도록 확장)
+	//   [정정] ① 2026-08-25 부터 dist_m·speed_kmh·to_lat/lon 은 비우지 않고 구역 안 실측 누적거리·
+	//   마지막 구역 안 위치로 채운다 — 비우는 것은 to_id·exit_tollgate_id·speed_limit_kmh 뿐.
+	//   ② TTL 경로의 dtEndTime 은 2026-10-04 부터 dtLastSeen(벽시계)이 아니라 그 트립 마지막 GPS 시각
+	//   (dtLastGpsEventTime, 없을 때만 dtLastSeen)이다 (2026-10-06 최정우 주석 수정)
 	void AppendExpiredClosedRoadCharge(int nThreadId, const string& strDeviceKey,
 		const VEHICLE_TRIP_SESSION& stSession, time_t dtEndTime, vector<CHARGE_INSERT_ROW> *pvtOut,
 		bool bNoTripEnd = false);
@@ -1484,6 +1589,9 @@ private:
 	//   구간단속 세션이면 N/3(AUDIT)로 1건 기록 — 폐쇄형과 동일 이유로 dist_m/speed_kmh/to_lat·lon은
 	//   비워둠 (2026-08-14 최정우 추가, 2026-08-20 최정우 수정 — dtEndTime 파라미터화, 근거는
 	//   AppendExpiredClosedRoadCharge() 주석 참고)
+	//   [정정] 현재 이 함수는 구간단속(CHARGE_TYPE=3) N/3 행을 만들지 않는다 — 제한속도와 무관하게
+	//   열린 구간을 일반도로 미러(CHARGE_TYPE=0, Y/0) 1행으로만 기록한다. 아래 2026-09-21 주석 참고
+	//   (2026-10-06 최정우 주석 수정)
 	// dwEndGpsSeq — 종료 tick 의 GPS_SEQ(0=미지정, 세션값 사용). 트립 종료 이벤트 tick 은
 	//   직전 tick 의 복사본이라 구역 갱신 경로를 안 타서 세션의 dwSpeedLastGpsSeq 가 그 앞에서
 	//   멈춘다 — 호출측이 실제 종료 seq 를 넘겨 구간 표기를 트립 끝에 맞춘다
@@ -1529,6 +1637,8 @@ private:
 	// TTL 만료(비정상 종료) 시 그 trip_id 의 전 과금유형(0~5) 중 아직 TRIP_END_DT 없는 행을
 	//   N/3(AUDIT) + TRIP_END_DT(마지막 확인 시각)으로 마감(사용자 지시, 2026-08-13 추가,
 	//   2026-08-13 수정 — 개방형 한정 해제, status 4→3 정정)
+	//   [정정] 위 3줄은 삭제된 [trip_abend] 처리 함수의 고아 주석이다 — 2026-10-04 TTL 마감이 [trip_end]
+	//   (UpdateTripEndDt, 판정 컬럼 미변경)로 통합되면서 함수·SQL 모두 없어졌다 (2026-10-06 최정우 주석 수정)
 	// 그 트립의 기존 최대 TRIP_SEQ 조회(읽기 전용, trip_seq 이어 매기기) — 구현부 주석 참고 (2026-10-04 최정우 추가)
 	int QueryTripSeqMax(PGconn *pcConn, const string& strTripId, const string& strDeviceKey);
 	// UpdateTripSeqOrder() 삭제 (2026-10-04 최정우 삭제 — 사용자 지시: trip_seq 는 SQL 로 처리하지 않고 엔진이 확정할 때 등록한다)
@@ -1565,6 +1675,8 @@ private:
 	bool IsZoneDirectionOpposite(const string& strRoadId, const RAW_LOG_INFO& stRawLogInfo);
 
 	// @brief 링크가 주정차 단속 폴리곤 안인지 — 커버리지 복구 제외 판정 (2026-09-22 최정우 추가)
+	//   [보완] 2026-10-04 E16 이후 호출부가 MM_PARK_SUPPRESS_NODESTEP(현재 false) && 로 묶여 있어
+	//   실제로는 평가되지 않는다 — 되돌릴 때만 다시 쓰인다 (2026-10-06 최정우 주석 추가)
 	bool IsLinkInsideParkingPolygon(uint64 qwLinkID);
 	// 원시좌표가 주정차 폴리곤 안(경계 park_pad 이내 포함)인지 — 정책 E18(SKIP 좌표는 주정차 정보에만) 판정용
 	bool IsRawInParkingZone(double dfLon, double dfLat, int nAccuracyM);
@@ -1593,6 +1705,8 @@ private:
 	// bulk update 실패 시 동일 rawgps_update 로 PROCESSING(2)→PENDING(0) 예약 해제
 	bool BulkReleaseRawLogs(PGconn *pcConn, const vector<RAW_LOG_UPDATE_ROW>& vtUpdates);
 	// 반환 전 미완료 트랜잭션 ROLLBACK 가드 (향후 명시적 트랜잭션 대비)
+	//   [보완] 현재 배치·TTL 마감은 이미 명시적 BEGIN/COMMIT 을 쓰므로, 그 도중 실패로 열린 채 남은
+	//   트랜잭션을 풀 반환 전에 정리하는 실사용 가드다 (2026-10-06 최정우 주석 추가)
 	void ReleaseConnection(PGconn *pcConn);
 	static bool AppendReleaseRowFromRawLog(vector<RAW_LOG_UPDATE_ROW> *pvtRelease,
 		const sRawLogInfo& stRawLogInfo);
@@ -1648,6 +1762,9 @@ private:
 	//   `{}` 는 string 은 기본 생성자로, POD 멤버는 0 으로 초기화하므로 memset 의 의도를
 	//   그대로 지키면서 UB 만 제거한다. POD 값은 어차피 SetConfig() 가 전부 덮어쓴다.
 	//   되돌리는 법: `{}` 를 지우고 생성자에 memset 을 되살리면 종전 동작(UB 포함)으로 복귀.
+	//   [정정] 현재 string 멤버는 4개다(strUpdateSQL/strChargeInsertSQL/strTripEndUpdateSQL/
+	//   strTripSeqMaxSQL) — strAbnormalTripEndSQL·strTripSeqOffSQL·strTripSeqFinSQL 은 2026-10-04 삭제
+	//   (2026-10-06 최정우 주석 수정)
 	RAWLOG_WORKER_CONFIG				m_stConfig{};
 	vector<unordered_map<string, VEHICLE_TRIP_SESSION> > m_vtTripSessions;
 	CGISUtil							m_cGISUtil;							// 방위각(GetDirAngleDegree) 계산용, stateless (2026-07-08 최정우 추가)

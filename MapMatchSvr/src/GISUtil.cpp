@@ -8,6 +8,16 @@
 
 namespace {
 
+/**
+ * @brief 두 경위도(WGS84, **도 단위** — ×360000 스케일 아님) 사이 하버사인 거리
+ * @param[in] dfLon1 점1 경도(도)
+ * @param[in] dfLat1 점1 위도(도)
+ * @param[in] dfLon2 점2 경도(도)
+ * @param[in] dfLat2 점2 위도(도)
+ * @return 거리(m). 지구 반경은 WGS84 장반경 6378137m
+ * @remark GridBorderDistance() 전용 — 스케일 좌표를 넣으면 수천 km 단위로 틀린다
+ *         (TryNearbyRoadNameCandidate 2026-09-15 버그가 이 단위 혼동이었다) (2026-10-06 최정우 주석 추가)
+*/
 double HaversineMetersDeg(const double dfLon1, const double dfLat1,
 		const double dfLon2, const double dfLat2)
 {
@@ -229,6 +239,8 @@ bool CGISUtil::IsCrossSgmt2Sgmt(POINT& stPoint1, POINT& stPoint2,
 
 /**
  * @brief 세그먼트 거리 (0.01 sec)
+ *        [정정] 2026-09-11 수정 이후 "0.01 sec(도×360000)" 단위가 아니다 — 입력은 **순수 WGS84 도**
+ *        (GetDistanceGEO2 위임), 반환은 **미터**(반올림, 최소 1)다. 호출부 0건(dead code) (2026-10-06 최정우 주석 수정)
  * @param[in] stPoint1 세그먼트 시작 좌표
  * @param[in] stPoint2 세그먼트 종료 좌표
  * @return 세그먼트 길이
@@ -432,7 +444,10 @@ void CGISUtil::GetNearGridID(const uint32& dwGridID, const SGMT_MATCH_INPUT& stS
 /**
  * @brief 좌표와 세그먼트 매핑
  * @param[in] stSgmtMatchInput 세그먼트 매칭 정보
- * @param[in] stSgmtInfo 세그먼트 정보
+ *            — stPoint 는 **도×360000 스케일** 이어야 한다(Begin/Continue StartMapMatch 가 변환 후 호출).
+ *            nRadius 는 미터 (2026-10-06 최정우 주석 추가)
+ * @param[in] stSgmtInfo 세그먼트 정보 (stPoint=도×360000, nDirAng=도, dfLen=wLenSgmt 미터)
+ *            (2026-10-06 최정우 주석 수정)
  * @param[out] pstSgmtMatchRes 세그먼트 맵매칭 결과
  * @param[in] bIgnoreRadiusCheck true 이면 nRadius 초과여도 기하 매칭 허용(진단용 최근접) (2026-07-10 최정우 수정)
  * @param[in] bIgnoreHeading true 이면 heading 이 있어도 없는 것으로 취급 — 방위각 하드컷
@@ -483,6 +498,8 @@ bool CGISUtil::SgmtMatch(SGMT_MATCH_INPUT& stSgmtMatchInput, SGMT_INFO& stSgmtIn
 	//   (2026-08-26 최정우 추가). 저속일 때 heading 을 안 믿는다는 원칙 자체는 아래 dfAnglePenalty
 	//   가중치(w_a=0)에 이미 있었으나 이 bReverseFit 판정 경로엔 빠져 있었음 — 동일 임계 재사용
 	//   (nSpeed<0=NO_SPEED 는 그대로 heading 신뢰, ContinueMapMatch.cpp:623 브릿지 판정과 동일 관례)
+	//   [정정] ":623" 은 당시 줄 번호 — CContinueMapMatch::GetLinkDepthInfo() 의 BridgeNearbyLinkStarts
+	//   호출 조건 "(nSpeed < 0) || (nSpeed > MM_SPEED_LOW_KMH)" 를 가리킨다 (2026-10-06 최정우 주석 수정)
 	bool bHasHeading = (!bIgnoreHeading) && (stSgmtMatchInput.nDirAng != NO_ANGLE)
 		&& ((stSgmtMatchInput.nSpeed < 0) || (stSgmtMatchInput.nSpeed > MM_SPEED_LOW_KMH));
 	if (bHasHeading)
@@ -498,6 +515,12 @@ bool CGISUtil::SgmtMatch(SGMT_MATCH_INPUT& stSgmtMatchInput, SGMT_INFO& stSgmtIn
 		bReverseFit = (abs(nDiffRev) < abs(nDiffFwd));
 		nHeadingDiff = bReverseFit ? nDiffRev : nDiffFwd;
 		// 하드 상한: 정·역 어느 쪽으로도 크게 어긋난(≈수직 이상) 후보만 배제. 그 안은 소프트 비용으로 경쟁
+		// [정정] 이 하드컷은 **발동할 수 없다**. nHeadingDiff 는 정·역 두 각도차 중 작은 쪽이고
+		//   |정방향차| + |역방향차| = 180° 이므로 그 값은 최대 90° 다 — MM_DIR_MAX_DEG(120°)를 넘을 수 없다.
+		//   즉 2026-07-16 양방향 비교 도입 이후 heading 으로 후보를 배제하는 경로는 여기 없고, 각도는
+		//   아래 소프트 비용(상한 MM_DIR_MAX_PENALTY)으로만 반영된다. 역방향 링크 차단은 호출측
+		//   (Continue 의 짝 링크 보유 시 bReverseFit 후보 제외, Begin 의 FixOppositePairByHeading·FixReverseLinkByAzimuth·IsAntiHeadingOpposite)이 맡는다
+		//   (2026-10-06 최정우 주석 수정)
 		if (abs(nHeadingDiff) > MM_DIR_MAX_DEG)
 			return false;
 	}
@@ -575,6 +598,9 @@ bool CGISUtil::SgmtMatch(SGMT_MATCH_INPUT& stSgmtMatchInput, SGMT_INFO& stSgmtIn
 	//     · 예) 거리 10m·각도차 40° → 10 + 1.0×40 = 50
 	//            거리 30m·각도차  5° → 30 + 1.0×5 = 35  ⇒ 더 작은 35(방향 맞는 도로) 선택
 	//   ※ 방위각 차이가 120°를 넘는 후보는 아예 제외(역방향 오매칭 방지)
+	//   [정정] 위 첫 예시(50 vs 35)는 2026-07-18 상한 도입 전 계산이다 — 지금은 10+min(40,15)=25 가
+	//   35 를 이겨 **가까운 10m 후보가 선택**된다. 또 120° 제외는 실제로 발동하지 않는다(정·역 중 작은
+	//   각도차는 최대 90° — 위 하드컷 [정정] 참고) (2026-10-06 최정우 주석 수정)
 	//   ※ 방위각 비용은 MM_DIR_MAX_PENALTY(15m)로 상한 — 근접 후보가 방위각 때문에 훨씬 먼
 	//     후보에게 역전당하지 않도록 함(2026-07-18 최정우 추가). 예) 거리 5m·각도차 100° →
 	//     5 + min(100, 15) = 20 vs 거리 40m·각도차 5° → 40 + 5 = 45 ⇒ 더 가까운 20(5m) 선택
@@ -622,16 +648,36 @@ bool CGISUtil::SgmtMatch(SGMT_MATCH_INPUT& stSgmtMatchInput, SGMT_INFO& stSgmtIn
 
 namespace {
 
+/**
+ * @brief 고가형 도로 여부 — ROAD_TYPE 1(고가차도)·3(교량)
+ * @param[in] nRoadType LINK_INFO.nRoadType (eLinkRoadType, 국토교통부고시 제2023-22호 코드)
+ * @return true(고가차도 또는 교량)
+ * @remark (2026-10-06 최정우 주석 추가)
+*/
 bool IsElevatedRoad(uint8 nRoadType)
 {
 	return (nRoadType == ROAD_TYPE_ELEVATED || nRoadType == ROAD_TYPE_BRIDGE);
 }
 
+/**
+ * @brief 지하형 도로 여부 — ROAD_TYPE 2(지하차도) **단독**. 4(터널)는 포함하지 않는다
+ * @param[in] nRoadType LINK_INFO.nRoadType
+ * @return true(지하차도)
+ * @remark 2026-08-27 ROAD_TYPE 코드 정정으로 대상이 터널→지하차도로 바뀌었다(DataDefine.h
+ *         eLinkRoadType 주석 참고) (2026-10-06 최정우 주석 추가)
+*/
 bool IsUndergroundRoad(uint8 nRoadType)
 {
 	return (nRoadType == ROAD_TYPE_UNDERGROUND);
 }
 
+/**
+ * @brief 고도차가 alt_gap 이내일 때 후보·직전 ROAD_TYPE 을 "같은 층" 으로 볼지 판정
+ * @param[in] nCandRoadType 후보 링크 ROAD_TYPE
+ * @param[in] nPrevRoadType 직전 매칭 링크 ROAD_TYPE
+ * @return true(호환 — 동일, 고가차도↔교량, 일반↔교량), false(그 외 — alt_penalty 가산 대상)
+ * @remark (2026-10-06 최정우 주석 추가)
+*/
 bool IsRoadTypeCompatible(uint8 nCandRoadType, uint8 nPrevRoadType)
 {
 	if (nCandRoadType == nPrevRoadType)
@@ -653,6 +699,15 @@ bool IsRoadTypeCompatible(uint8 nCandRoadType, uint8 nPrevRoadType)
 	return false;
 }
 
+/**
+ * @brief 고도차가 alt_gap 을 넘을 때 방향과 맞지 않는 ROAD_TYPE 후보에 주는 추가 비용
+ * @param[in] dfDeltaAlt 현재 GPS 고도 − 직전 매칭 GPS 고도(m)
+ * @param[in] nCandRoadType 후보 링크 ROAD_TYPE
+ * @param[in] stAltConfig config [mapmatch] alt_* 설정
+ * @return 상승(Δ>+alt_gap)인데 후보가 지하차도면 +alt_penalty, 하강(Δ<−alt_gap)인데 후보가
+ *         고가차도·교량이면 +alt_penalty, 그 외 0
+ * @remark (2026-10-06 최정우 주석 추가)
+*/
 double RoadTypeDirectionPenalty(double dfDeltaAlt, uint8 nCandRoadType,
 		const ALTITUDE_SCORE_CONFIG& stAltConfig)
 {
@@ -685,11 +740,13 @@ double RoadTypeDirectionPenalty(double dfDeltaAlt, uint8 nCandRoadType,
  *   |Δalt| ≤ alt_gap:
  *     · 후보 ROAD_TYPE = 직전  → −alt_penalty
  *     · 호환(고가↔교량)        → 0
+ *       [정정] 2026-08-28 부터 일반↔교량도 호환(0)이다 — IsRoadTypeCompatible 참고 (2026-10-06 최정우 주석 수정)
  *     · 불일치                 → +alt_penalty
  *
  *   |Δalt| > alt_gap:
  *     · alt_weight × (|Δalt| − alt_gap) + 방향 패널티
  *     · Δalt > +차이 이고 후보=지하 → +alt_penalty
+ *       [보완] 여기서 "지하" 는 ROAD_TYPE 2(지하차도)만이다 — 4(터널)는 해당 없음 (2026-10-06 최정우 주석 수정)
  *     · Δalt < −차이 이고 후보=고가/교량 → +alt_penalty
  *
  *   |Δalt|/dfHorizMove > alt_slope → 0 (GPS 고도 불신, 폴백)
@@ -794,6 +851,8 @@ sint16 CGISUtil::GetDirAngleDegree(POINT& stPoint1, POINT& stPoint2)
  * @param[in] stPoint X,Y 좌표
  * @param[in] stIntersect 세그먼트 교차점 X,Y 좌표
  * @return 세그먼트 시작부터 교차점까지 거리
+ *         [보완] 두 점 모두 도×360000 스케일 입력, 반환은 하버사인 거리(m, 반경 6378137m)다.
+ *         이름과 달리 "세그먼트 시작↔교차점" 전용이 아니라 임의의 두 점 거리로 쓰인다 (2026-10-06 최정우 주석 수정)
 */
 double CGISUtil::GetDistanceGEO1(POINT& stPoint, POINT& stIntersect)
 {
@@ -816,6 +875,8 @@ double CGISUtil::GetDistanceGEO1(POINT& stPoint, POINT& stIntersect)
  * @param[in] stPoint X,Y 좌표
  * @param[in] stIntersect 세그먼트 교차점 X,Y 좌표
  * @return 세그먼트 시작부터 교차점까지 거리
+ *         [보완] 입력은 순수 WGS84 도, 반환은 미터. 호출부는 GetSgmtLength()(호출부 0건)뿐이다
+ *         (2026-10-06 최정우 주석 수정)
 */
 double CGISUtil::GetDistanceGEO2(POINT& stPoint, POINT& stIntersect)
 {

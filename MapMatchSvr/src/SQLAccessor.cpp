@@ -104,6 +104,8 @@ bool CSQLAccessor::Load()
 		// 한글 주석 다수)에서 실제로 73줄이 개행 직전 이런 바이트로 끝나 매번 이 코드를 타는
 		// 것을 확인했다 — 같은 패턴을 IniReader.cpp:139 는 이미 unsigned char 캐스트로 고쳐
 		// 뒀는데 여기는 빠뜨렸다.
+		// [정정] "IniReader.cpp:139" 는 행 번호가 바뀌었다 — CIniReader::ReadIniFile() 의 앞쪽 공백
+		//   건너뛰기 루프를 가리킨다 (2026-10-06 최정우 주석 수정)
 		for (; read>0 && isspace(static_cast<unsigned char>(buf[read-1])); read--) buf[read-1] = 0x00;
 		if (buf[0] == 0x00) continue;
 
@@ -169,6 +171,8 @@ bool CSQLAccessor::Load()
  * @brief 키 값을 이용하여 SQL 문 읽기
  * @param[in] key SQL 문 키 값
  * @return SQL 문
+ *   키가 없으면 빈 문자열 — 호출측(CServer::Initialize)은 빈 문자열로 필수/선택 SQL 누락을 판정한다
+ *   (2026-10-06 최정우 주석 추가)
 */
 string CSQLAccessor::GetSQL(string key)
 {

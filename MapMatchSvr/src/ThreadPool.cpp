@@ -102,6 +102,9 @@ void CThreadPoolWorker::stop(int /* nThreadId */, void *context)	// 전체 정�
  * @brief 생성자
  * @param[in] nMaxThreads 쓰레드 갯수
  * @param[in] pcRunnable 작업용 쓰레드 클래스
+ * @param[in] bDetatch true(기본, 운영값)면 각 워커를 start() 직후 detach — 종료 완료는 join 이 아니라
+ *            WaitForAllStopped() 의 EWS_STOPPED 폴링으로 확인한다 (2026-10-06 최정우 주석 추가)
+ * @remark pcRunnable 의 소유권을 가져가 ~CThreadPool() 에서 delete 한다(워커가 전부 멈춘 경우만)
 */
 CThreadPool::CThreadPool(int nMaxThreads, Runnable *pcRunnable, bool bDetatch) : 
 	m_pcRunnable(pcRunnable), 
@@ -146,6 +149,7 @@ CThreadPool::~CThreadPool()
 	// 정상 종료될 때마다(=매번) 재현되는 문제였다. detach 된 경우는 join() 을 아예 안 부르고,
 	// 아래 GetStoppedThreads() 폴링 루프가 이미 "스레드가 실제로 run() 을 빠져나갔는지"를
 	// 대기해주므로 완료 보장은 그대로 유지된다.
+	// [정정] 그 폴링은 지금 아래 WaitForAllStopped(3000)(100ms 간격, 최대 3초)이다 (2026-10-06 최정우 주석 수정)
 	for (it=m_lstThreadPool.begin(); it!=m_lstThreadPool.end(); it++)
 	{
 		(*it).thread->stop();
@@ -343,6 +347,8 @@ int CThreadPool::GetStoppedThreads()
  * @brief 워커 스레드 종료 요청 (큐 처리 중단)
  * @return void
  * @remark #8 종료: 신규 Dequeue 중단, 진행 중 run() 은 완료 후 종료
+ *   진행 중인 idle()(유휴 TTL 검사)도 끝까지 수행된다. 큐에 남은 batch 는 꺼내지 않으므로
+ *   호출측이 DrainQueuedBatches() 로 회수해야 한다 (2026-10-06 최정우 주석 추가)
 */
 void CThreadPool::RequestShutdown()
 {
@@ -359,6 +365,8 @@ void CThreadPool::RequestShutdown()
  * @brief 활성 워커·큐가 비울 때까지 대기
  * @param[in] nMaxWaitMs 최대 대기 (ms)
  * @return true(유휴), false(타임아웃 시 잔여 작업 있음)
+ * @remark 현재 호출부 없음 — 종료 경로는 WaitForActiveIdle()+DrainQueuedBatches() 를 쓴다
+ *   (RequestShutdown 뒤에는 큐가 줄지 않아 이 함수는 타임아웃까지 기다린다) (2026-10-06 최정우 주석 추가)
 */
 bool CThreadPool::WaitForIdle(int nMaxWaitMs)
 {

@@ -27,6 +27,8 @@ CLoggerManager::~CLoggerManager()
  * @brief 초기화
  * @param[in] strLogPath 로그 경로
  * @param[in] nLogKeepRunTime 실행 시간
+ *            [정정] 만료 로그 삭제를 실행할 시각(시, 0~23). 음수면 삭제 기능 미사용(UNUSE_LOG_KEEP)
+ *            (2026-10-06 최정우 주석 수정)
  * @param[in] nLogKeepDay 로그 보관일 (단위 : 날자)
  * @return true(성공), false(실패)
 */
@@ -116,6 +118,8 @@ void CLoggerManager::LogDeleteRun(time_t dtNow)
 
 /**
  * @brief 로그 경로내 파일 목록
+ *   [정정] 목록 조회가 아니라 삭제 함수다 — 경로 아래(하위 디렉터리 재귀, 심링크 디렉터리 제외)의
+ *   ".log" 로 끝나는 파일 중 수정시각이 dtRmTime 보다 이른 것을 remove() 한다 (2026-10-06 최정우 주석 수정)
  * @param[in] dtRmTime 로그 삭제 파일 시간 (초)
  * @param[in] strLogPath 로그 경로
  * @return true(성공), false(실패)

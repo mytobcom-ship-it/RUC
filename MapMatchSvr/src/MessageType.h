@@ -1,6 +1,8 @@
 /**
  * @file MessageType.h
  * @brief http 수신 메시지 정의 헤더 파일
+ * @remark [보완] 현재 입력은 http 가 아니라 PRIM_RAWGPS DB 행([rawgps_select])이다 — 행 파싱은
+ *   CRawLogFetcher::ParseRow() (2026-10-06 최정우 주석 추가)
 */
 #ifndef __MESSAGETYPE_H__
 #define __MESSAGETYPE_H__
@@ -101,6 +103,9 @@ typedef struct sRawLogInfo
 /**
  * @typedef RAW_LOG_BATCH
  * @brief 동일 운행(trip_id) 단위 원시 GPS 로그 묶음 (gps_dt·gps_seq 순)
+ * @remark [정정] 묶음 단위는 (DEVICE_KEY, TRIP_ID) 연속 구간이고, 정렬은 gps_dt 가 아니라
+ *   DEVICE_KEY→TRIP_ID→GPS_SEQ 순이다(CRawLogFetcher::FetchAndDispatch 의 stable_sort).
+ *   워커 배정은 hash(DEVICE_KEY) % N (2026-10-06 최정우 주석 수정)
 */
 typedef vector<sRawLogInfo> RAW_LOG_BATCH;
 
@@ -167,6 +172,8 @@ typedef struct sMapMatchInput
 	uint64							qwLinkID;							// 현재 주행중인 링크 ID (연속 측위)
 	uint8							nRoadRank;							// (미사용, 0 유지) 구 도로등급 힌트 필드
 	sint16							nSearchStep;						// 연속 측위시 탐색할 단계 (연속 측위, 기본:0, 0~최대검색단계)
+																		//   [정정] 생성자 기본값은 2 이고, 현재 읽는 코드가 없다 — 실제 탐색 depth 는
+																		//   CDataLoader::GetSearchStep()(config maxstep) + 공백적응 확장 (2026-10-06 최정우 주석 수정)
 	sint16							nAltitudeM;							// 현재 GPS 고도(m). NO_ALTITUDE=없음
 	sint16							nPrevAltitude;						// 직전 매칭 GPS 고도(m). NO_ALTITUDE=없음
 	uint8							nPrevRoadType;						// 직전 성공 링크 ROAD_TYPE
@@ -224,6 +231,8 @@ typedef struct sMapMatchInput
  * @remark
  * 	- nConnect : 0:연결로 아님, 1:연결로 (MOCT). 101~108:구 링크 등급별 연결로
  * 	- nRoadType : 000:일반, 001:교량, 002:터널, 003:고가, 004:지하 (MOCT_LINK.ROAD_TYPE)
+ * 	  [정정] 공식 코드값은 0:일반, 1:고가, 2:지하, 3:교량, 4:터널 — DataDefine.h eLinkRoadType
+ * 	  (2026-08-27 정정분) 기준 (2026-10-06 최정우 주석 수정)
  * 	- nStNodeType/nEdNodeType : NODE_TYPE_* — MOCT_NODE.NODE_TYPE (101~107)
 */
 typedef struct sMatchLinkInfo
@@ -281,6 +290,8 @@ typedef struct sMatchLinkInfo
 	//   다른 곳에서 memset(0, MATCH_LINK_INFO_SIZE) 로 리셋되는 관례라 vector 대신 고정 배열
 	//   사용(POD 유지) — nSearchStep 상한(maxstep+MM_STEP_EXTEND_MAX, 실무상 5 이하)보다
 	//   충분히 큰 8칸 (2026-08-20 최정우 추가)
+	//   [정정] maxstep 이 2026-08-22 에 2→4 로 올라 상한은 4+3=7 이다 — 8칸은 여전히 충분하나 여유는
+	//   1칸뿐이다(maxstep 을 더 올리면 이 칸 수도 같이 볼 것) (2026-10-06 최정우 주석 수정)
 	uint64							aqwPathLinkIDs[MATCH_LINK_INFO_MAX_PATH];
 	uint8							nPathLinkCount;						// aqwPathLinkIDs 유효 개수(0=경로 정보 없음 — qwLinkID 만 사용)
 } MATCH_LINK_INFO, *PMATCH_LINK_INFO;

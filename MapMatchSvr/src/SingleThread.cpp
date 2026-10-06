@@ -135,6 +135,9 @@ CSingleThread::~CSingleThread()
 	// 터질 수 있는 구조적 결함). m_nId 는 threadHandler() 에서 다른 용도(-1 리셋)로 이미 쓰이고
 	// 있어 재활용하면 위험해, 이 카운터만 별도로 둬서 마지막 살아있는 인스턴스가 소멸할 때만
 	// destroy 하도록 고친다.
+	// [정정] "m_nId 는 threadHandler() 에서 -1 리셋으로 쓰인다" 는 2026-09-15 에 그 대입이 제거돼 더
+	//   이상 사실이 아니다(threadHandler() 주석 참고). 별도 카운터를 두는 결정은 그대로 유효하다
+	//   (2026-10-06 최정우 주석 수정)
 	// [버그 수정, 2026-09-11 최정우] 위 카운터 자체가 static(전 인스턴스 공유)인데 여기선 아예
 	// 락 없이 감소시키고 있었다 — 두 인스턴스가 동시에 소멸하면 감소 자체가 레이스(카운트 유실 →
 	// pthread_attr_destroy 누락 또는 다른 인스턴스가 pthread_create(..., &m_attr, ...) 호출 중에
@@ -203,6 +206,8 @@ void CSingleThread::start()
 			//   상태를 되돌려 join() 이 즉시 통과하게 하고, 예외로 실패를 알린다 —
 			//   호출측 2곳(AppMain:665, Server.cpp:697)은 이미 try/catch 범위 안에 있고
 			//   이 클래스는 다른 실패도 예외로 알리는 규약이다(IllegalThreadStateException).
+			//   [정정] 위 행 번호는 바뀌었다 — main() 의 pcServer->start()/join() 과
+			//   CServer::Initialize() 끝의 m_pcRawLogFetcher->start() 를 가리킨다 (2026-10-06 최정우 주석 수정)
 			m_nState = static_cast<int>(ESS_INITIAL);
 			throw IllegalThreadStateException("thread create failed!");
 		}
@@ -224,6 +229,8 @@ void CSingleThread::join()
 	//   **스레드가 아직 살아있는데 join() 이 반환**한다. 호출측은 반환 즉시 해제를 시작하므로
 	//   (Server.cpp:731 join → 732 delete m_pcRawLogFetcher) 그 스레드가 아직 쓰고 있는 객체를
 	//   지우는 use-after-free 가 된다. 상태 검사·대기를 같은 뮤텍스 안에서 루프로 묶는다.
+	//   [정정] 행 번호는 바뀌었다 — CServer::Uninitialize() 의 m_pcRawLogFetcher->join() 직후
+	//   delete 를 가리킨다 (2026-10-06 최정우 주석 수정)
 	pthread_mutex_lock(&m_mutex);
 	m_bJoinning = true;
 	while (m_nState == static_cast<int>(ESS_RUNNING))
@@ -271,6 +278,9 @@ void CSingleThread::join(unsigned long time)
 /**
  * @brief 인터럽트 쓰레드
  * @return void
+ * @remark 대상 스레드에 SIGUSR1 을 보낼 뿐이며, 핸들러(interruptHandler)는 플래그만 세운다 — 대기 중인
+ *   스레드를 깨우지는 못한다(조건변수 대기는 WakeUp()/RequestShutdown() 이 담당). 현재 호출부 없음
+ *   (2026-10-06 최정우 주석 추가)
 */
 void CSingleThread::interrupt()
 {
@@ -280,6 +290,8 @@ void CSingleThread::interrupt()
 /**
  * @brief 인터럽트 여부
  * @return true(성공), false(실패)
+ *   [정정] true=인터럽트 플래그가 세워짐(SIGUSR1 수신 또는 run() 이 InterruptedException 을 던짐),
+ *   false=세워지지 않음 (2026-10-06 최정우 주석 수정)
 */
 bool CSingleThread::IsInterrupted()
 {
@@ -289,6 +301,7 @@ bool CSingleThread::IsInterrupted()
 /**
  * @brief 쓰레드가 실행 중인지 여부
  * @return true(성공), false(실패)
+ *   [정정] true=ESS_RUNNING(start 이후 run() 종료 전), false=시작 전·종료됨 (2026-10-06 최정우 주석 수정)
 */
 bool CSingleThread::IsAlive()
 {

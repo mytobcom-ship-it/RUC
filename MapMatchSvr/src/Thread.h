@@ -24,6 +24,7 @@ public:
 	virtual void stop(int /* nThreadId */, void * /* context */ = nullptr) {}
 	// 워커가 일감 없이 일정 시간(CThreadPoolWorker 의 대기 상한) 기다렸을 때 그 워커 스레드에서 호출된다.
 	//   기본 구현은 아무것도 하지 않는다 (2026-10-04 최정우 추가 — RawLogWorker 의 주기 TTL 검사용)
+	//   대기 상한은 현재 60초(ThreadPool.cpp MM_WORKER_IDLE_TICK_MS) (2026-10-06 최정우 주석 추가)
 	virtual void idle(int /* nThreadId */) {}
 	static uint32 GetThreadHandle();
 };

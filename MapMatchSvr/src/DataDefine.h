@@ -18,6 +18,7 @@
 #define NO_ACCURACY					-1									// 수평 오차(ACCURACY_M) 미적용
 #define NO_ALTITUDE					-1									// 고도(ALTITUDE_M) 미적용
 #define NO_PERIOD					-1									// GPS 입력 주기(초) 없음
+																		//   [보완] 현재 참조처 없음 (2026-10-06 최정우 주석 추가)
 
 /**
  * @enum eLinkRoadType
@@ -114,6 +115,7 @@ enum eLinkNodeType : uint8
  *   |Δalt| ≤ alt_gap:
  *     · 같은 ROAD_TYPE  → −alt_penalty (alt_penalty 가 양수인 설정 기준 — 부호는 그대로 뒤집어 적용)
  *     · 호환 ROAD_TYPE  → 0  (고가↔교량)
+ *       [보완] 2026-08-28 부터 일반↔교량도 호환(IsRoadTypeCompatible) (2026-10-06 최정우 주석 추가)
  *     · 불일치          → +alt_penalty
  *   |Δalt| > alt_gap:
  *     · alt_weight × (|Δalt| − alt_gap) + 방향 패널티
@@ -419,6 +421,8 @@ typedef struct sAltitudeScoreConfig
 																			//   중간시작)으로 잘못 표기되던 것을 분리
 																			//   (2026-09-15 최정우 추가)
 #define NCR_CLOSED_ENTRY_UNOBSERVED	21									// CLOSED(폐쇄형) — 진입게이트 미확인(트립이 구역 중간에서 시작)
+																			//   [보완] 2026-09-23 부터 입구 게이트를 거치지 않은 구역 중간
+																			//   진입(교차로·램프)도 이 코드다 (2026-10-06 최정우 주석 추가)
 #define NCR_CLOSED_ENTRY_EQUALS_EXIT	22									// CLOSED(폐쇄형) — 입구==출구 동일 게이트(유턴 등)
 #define NCR_CLOSED_EXIT_UNCONFIRMED	23									// CLOSED(폐쇄형) — 출구게이트 미확인
 #define NCR_SPEED_ENTRY_UNOBSERVED		31									// SPEED(구간단속) — 진입게이트 미확인
@@ -452,6 +456,9 @@ typedef struct sAltitudeScoreConfig
 	//   AppendExpiredSpeedZoneCharge() 는 2026-09-06 정책 변경 이후 SPEED 행을 만들지 않고
 	//   일반도로 미러(Y/0, non_charge_reason=0) 1건만 적재하므로 61/62 가 붙을 행이 없다.
 	//   구간단속 고유 사유는 31~33(정상 진출 경로에서만 사용)이다.
+	//   [보완] 31~33 은 행에 값을 채우지만 그 SPEED 행 자체가 적재되지 않는다 — 게이트 이상(31·32)은
+	//   2026-09-06 적재 조건(양쪽 게이트 확인+위반)에, 출구 미확인(33)은 2026-10-04 "SPEED 행 대신 미러만"
+	//   정책에 걸려 DB 에는 구조적으로 나타나지 않고 WARN 로그로만 확인된다 (2026-10-06 최정우 주석 추가)
 
 /**
  * @enum eCoordinateType

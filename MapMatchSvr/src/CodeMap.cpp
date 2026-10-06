@@ -58,5 +58,7 @@ const char *CCodeMap::GetValue(PCODE_ENTRY pstCodeEntry, int nEntryCount, int nC
 	//   **새 코드를 추가하면서 테이블 등록을 빠뜨리는 순간 크래시**가 나는 구조였다.
 	//   nullptr 을 기대하는 호출부는 없음을 전수 확인했다(있으면 이 변경이 동작을 바꿨을 것).
 	//   szErrorMsg[48](MessageType.h:216) 에 들어가야 하므로 짧게 유지할 것.
+	//   [정정] 행 번호는 바뀌었다 — MessageType.h 의 MATCH_LINK_INFO 계열 szErrorMsg[48] 선언을 가리킨다
+	//   (2026-10-06 최정우 주석 수정)
 	return "알 수 없는 코드";
 }

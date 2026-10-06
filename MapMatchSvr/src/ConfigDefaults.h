@@ -11,6 +11,7 @@
 #define CFG_DEF_PATH				"./log"								// [log] path (단위: 경로) (2026-07-11 최정우 주석 추가)
 #define CFG_DEF_LEVEL				2									// [log] level (단위: 레벨) (2026-07-11 최정우 주석 추가)
 #define CFG_DEF_RUNTIME				(-1)								// [log] runtime (단위: 초) (2026-07-11 최정우 주석 추가)
+																		// [정정] 단위는 초가 아니라 "시" — 로그 정리 시각 0~23, 음수=미사용 (2026-10-06 최정우 주석 수정)
 #define CFG_DEF_KEEPDAY				7									// [log] keepday (단위: 일) (2026-07-11 최정우 주석 추가)
 // ── [database] ─────────────────────────────────────────────────────────────────────
 #define CFG_DEF_PORT				5432								// [database] port (단위: 포트) (2026-07-11 최정우 주석 추가)
@@ -29,6 +30,7 @@
 #define CFG_DEF_TTL					3600								// [worker]	ttl_sec (단위: sec) (2026-07-11 최정우 주석 추가)
 #define CFG_DEF_SHUTDOWN_WAIT		30000								// [worker]	shutdown_wait (단위: ms) (2026-07-11 최정우 주석 추가)
 #define CFG_DEF_RETRY_MAX			5									// [worker]	retry_max (2026-07-11 최정우 주석 추가)
+																		//   release→PENDING 재처리 상한, 초과 시 ERROR(4) 고정, 0=무제한 (2026-10-06 최정우 주석 추가)
 // ── [threads] ─────────────────────────────────────────────────────────────────────
 #define CFG_DEF_COUNT				10									// [threads]	count (2026-07-11 최정우 주석 추가)
 // ── [mapmatch] ─────────────────────────────────────────────────────────────────────
